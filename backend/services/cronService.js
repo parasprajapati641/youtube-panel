@@ -4,22 +4,26 @@ const ApiProvider = require('../models/ApiProvider');
 const User = require('../models/User');
 const SmmProviderService = require('./smmProviderService');
 
-const syncOrdersStatus = async () => {
+const syncOrdersStatus = async (inputOrders = null) => {
   try {
-    // Find all active non-completed orders
-    const activeOrders = await Order.find({
-      status: { $in: ['Pending', 'In Progress', 'Processing'] },
-      providerOrderId: { $ne: '' },
-    }).populate({
-      path: 'serviceId',
-      populate: { path: 'providerId' },
-    });
+    let activeOrders = inputOrders;
 
-    if (activeOrders.length === 0) {
-      return;
+    if (!activeOrders) {
+      // Find all active non-completed orders across system
+      activeOrders = await Order.find({
+        status: { $in: ['Pending', 'In Progress', 'Processing'] },
+        providerOrderId: { $ne: '' },
+      }).populate({
+        path: 'serviceId',
+        populate: { path: 'providerId' },
+      });
     }
 
-    console.log(`[Cron Sync] Processing ${activeOrders.length} pending/in-progress orders...`);
+    if (!activeOrders || activeOrders.length === 0) {
+      return { syncedCount: 0, updatedCount: 0 };
+    }
+
+    console.log(`[Order Sync] Processing ${activeOrders.length} pending/in-progress orders...`);
 
     // Group active orders by ApiProvider
     const providerGroups = {};
@@ -36,10 +40,14 @@ const syncOrdersStatus = async () => {
       providerGroups[providerIdStr].orders.push(ord);
     }
 
+    let updatedCount = 0;
+
     // Process each provider group
     for (const key of Object.keys(providerGroups)) {
       const { provider, orders } = providerGroups[key];
-      const providerOrderIds = orders.map((o) => o.providerOrderId);
+      const providerOrderIds = orders.map((o) => o.providerOrderId).filter(Boolean);
+
+      if (providerOrderIds.length === 0) continue;
 
       const statusMap = await SmmProviderService.getOrderStatus(provider, providerOrderIds);
 
@@ -51,24 +59,28 @@ const syncOrdersStatus = async () => {
 
           if (rawStatus.includes('completed')) {
             newStatus = 'Completed';
-          } else if (rawStatus.includes('progress') || rawStatus.includes('processing')) {
+          } else if (rawStatus.includes('progress') || rawStatus.includes('processing') || rawStatus.includes('inprogress')) {
             newStatus = 'In Progress';
           } else if (rawStatus.includes('cancel')) {
             newStatus = 'Canceled';
           } else if (rawStatus.includes('partial')) {
             newStatus = 'Partial';
+          } else if (rawStatus.includes('pending')) {
+            newStatus = 'Pending';
           }
 
-          if (extStatus.remains !== undefined) {
+          if (extStatus.remains !== undefined && extStatus.remains !== null && extStatus.remains !== '') {
             ord.remains = Number(extStatus.remains) || 0;
           }
-          if (extStatus.start_count !== undefined) {
+          if (extStatus.start_count !== undefined && extStatus.start_count !== null && extStatus.start_count !== '') {
             ord.startCount = Number(extStatus.start_count) || 0;
           }
 
-          if (newStatus !== ord.status) {
-            console.log(`[Cron Update] Order #${ord._id.toString().slice(-6)} status: ${ord.status} -> ${newStatus}`);
-            ord.status = newStatus;
+          if (newStatus !== ord.status || extStatus.remains !== undefined) {
+            if (newStatus !== ord.status) {
+              console.log(`[Order Status Update] Order #${ord._id.toString().slice(-6)}: ${ord.status} -> ${newStatus}`);
+              ord.status = newStatus;
+            }
 
             // Handle refund if status changed to Canceled
             if (newStatus === 'Canceled') {
@@ -79,20 +91,22 @@ const syncOrdersStatus = async () => {
                 console.log(`[Cron Refund] Refunded $${ord.totalCost} to user ${user.username}`);
               }
             }
+            await ord.save();
+            updatedCount++;
           }
-
-          await ord.save();
         }
       }
     }
+
+    return { syncedCount: activeOrders.length, updatedCount };
   } catch (error) {
-    console.error('[Cron Sync Error]', error.message);
+    console.error('[Order Sync Error]', error.message);
+    return { error: error.message };
   }
 };
 
 const initCron = () => {
   console.log('[Cron Job] Initializing 2-minute multi-provider SMM order status synchronization...');
-  // Run every 2 minutes
   cron.schedule('*/2 * * * *', () => {
     syncOrdersStatus();
   });

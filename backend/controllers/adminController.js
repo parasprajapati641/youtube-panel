@@ -179,9 +179,22 @@ const deleteService = async (req, res) => {
 };
 
 // @route   GET /api/admin/orders
-// @desc    View all orders in system with populated user & service info
+// @desc    View all orders in system with populated user & service info and real-time status sync
 const getAllOrders = async (req, res) => {
   try {
+    const { syncOrdersStatus } = require('../services/cronService');
+    const activeOrders = await Order.find({
+      status: { $in: ['Pending', 'In Progress', 'Processing'] },
+      providerOrderId: { $ne: '' },
+    }).populate({
+      path: 'serviceId',
+      populate: { path: 'providerId' },
+    });
+
+    if (activeOrders.length > 0) {
+      await syncOrdersStatus(activeOrders);
+    }
+
     const orders = await Order.find()
       .populate('userId', 'username email balance isUnlimited')
       .populate('serviceId', 'name category ratePer1000')

@@ -3,6 +3,7 @@ const Service = require('../models/Service');
 const User = require('../models/User');
 const ApiProvider = require('../models/ApiProvider');
 const SmmProviderService = require('../services/smmProviderService');
+const { syncOrdersStatus } = require('../services/cronService');
 
 // @route   POST /api/orders
 // @desc    Place a new order & auto-dispatch to external SMM Provider API
@@ -120,9 +121,25 @@ const createOrder = async (req, res) => {
 };
 
 // @route   GET /api/orders/my-orders
-// @desc    Get current user's order history
+// @desc    Get current user's order history with dynamic live status sync
 const getMyOrders = async (req, res) => {
   try {
+    // 1. Fetch active pending/in-progress orders for this user
+    const activeOrders = await Order.find({
+      userId: req.user.id,
+      status: { $in: ['Pending', 'In Progress', 'Processing'] },
+      providerOrderId: { $ne: '' },
+    }).populate({
+      path: 'serviceId',
+      populate: { path: 'providerId' },
+    });
+
+    // 2. Perform real-time batch status query to Provider API if active orders exist
+    if (activeOrders.length > 0) {
+      await syncOrdersStatus(activeOrders);
+    }
+
+    // 3. Return user's order history sorted by newest first
     const orders = await Order.find({ userId: req.user.id })
       .populate('serviceId', 'name category ratePer1000 speed')
       .sort({ createdAt: -1 });

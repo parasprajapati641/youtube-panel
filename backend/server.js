@@ -36,10 +36,11 @@ app.use('/api/admin', require('./routes/adminRoutes'));
 app.get('/api/cron/sync-orders', async (req, res) => {
   try {
     console.log('[Cron Endpoint Triggered] Initiating provider order status synchronization...');
-    await syncOrdersStatus();
+    const result = await syncOrdersStatus();
     res.json({
       success: true,
       message: 'Order status synchronization completed successfully',
+      result,
       timestamp: new Date(),
     });
   } catch (error) {
