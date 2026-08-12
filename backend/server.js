@@ -52,12 +52,26 @@ app.get('/api/cron/sync-orders', async (req, res) => {
   }
 });
 
-// Health Check
+// Health Check Endpoint
 app.get('/api/health', (req, res) => {
   res.json({
-    status: 'OK',
-    message: 'YouTube & Social Media Marketing Panel Backend API with SMM API v2 & Cron Sync is running smoothly',
+    status: 'ok',
+    message: 'Backend Live',
     timestamp: new Date(),
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Backend Live',
+  });
+});
+
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Backend Live',
   });
 });
 
