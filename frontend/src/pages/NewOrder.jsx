@@ -197,8 +197,11 @@ const NewOrder = () => {
                 <span className="text-gray-400">
                   Rate: <strong className="text-white">${currentService.ratePer1000.toFixed(2)} / 1000</strong>
                 </span>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold flex items-center gap-1">
+                  🛡️ 100% Lifetime Guaranteed Non-Drop Services
+                </span>
                 <span className="px-2.5 py-0.5 rounded-full bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan font-bold flex items-center gap-1">
-                  ⚡ {currentService.speed || 'Instant 30 min delivery'}
+                  ⚡ {currentService.speed || 'Instant delivery'}
                 </span>
                 <span className="text-gray-400">
                   Min: <strong className="text-accent-cyan">{currentService.minQuantity}</strong> | Max: <strong className="text-accent-cyan">{currentService.maxQuantity.toLocaleString()}</strong>
@@ -206,7 +209,9 @@ const NewOrder = () => {
               </div>
               {currentService.description && (
                 <p className="text-gray-400 pt-2 border-t border-gray-800/80">
-                  {currentService.description}
+                  {currentService.description.includes('100% Lifetime Guaranteed Non-Drop') 
+                    ? currentService.description 
+                    : `100% Lifetime Guaranteed Non-Drop Services. ${currentService.description}`}
                 </p>
               )}
             </div>

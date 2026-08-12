@@ -75,82 +75,82 @@ const seedDatabase = async () => {
 
     const initialServices = [
       {
-        name: 'YouTube Likes [FineSMM Service #4351 - Non Drop - Lifetime Refill]',
+        name: 'YouTube Likes [FineSMM Service #4351 - 100% Real Human - Non Drop - Lifetime Refill]',
         category: 'YouTube Likes',
         ratePer1000: 1.50,
         minQuantity: 50,
         maxQuantity: 100000,
         status: 'active',
         speed: 'Instant 1k/Min delivery',
-        description: 'Fast non-drop YouTube likes. Tested and verified on FineSMM (Service ID 4351).',
+        description: '100% Lifetime Guaranteed Non-Drop Services. Real human YouTube likes with lifetime refill button (FineSMM ID 4351).',
         providerId: provider1._id,
         providerServiceId: '4351',
       },
       {
-        name: 'YouTube Views [FineSMM Service #3287 - 30 Days Auto Refill]',
+        name: 'YouTube Views [FineSMM Service #3287 - Real Human Engagement - 0% Drop Guaranteed]',
         category: 'YouTube Views',
         ratePer1000: 1.85,
         minQuantity: 100,
         maxQuantity: 1000000,
         status: 'active',
         speed: 'Speed: 5k/Day (Start: 0-15 Min)',
-        description: 'High retention organic YouTube views. Tested and verified on FineSMM (Service ID 3287).',
+        description: '100% Lifetime Guaranteed Non-Drop Services. High retention real human engagement views (FineSMM ID 3287).',
         providerId: provider1._id,
         providerServiceId: '3287',
       },
       {
-        name: 'YouTube Subscribers [FineSMM Service #4035 - HQ Accounts 0% Drop]',
+        name: 'YouTube Subscribers [FineSMM Service #4035 - Real HQ Accounts - 0% Drop Guaranteed]',
         category: 'YouTube Subscribers',
         ratePer1000: 18.50,
         minQuantity: 100,
         maxQuantity: 10000,
         status: 'active',
         speed: 'Speed: 500-2000/Day (Organic)',
-        description: 'HQ non-drop channel subscribers. Tested and verified on FineSMM (Service ID 4035).',
+        description: '100% Lifetime Guaranteed Non-Drop Services. High quality real human channel subscribers (FineSMM ID 4035).',
         providerId: provider1._id,
         providerServiceId: '4035',
       },
       {
-        name: 'YouTube Watch Hours [PrimeSMM 4000h Package]',
-        category: 'YouTube Watch Hours',
-        ratePer1000: 24.00,
-        minQuantity: 500,
-        maxQuantity: 4000,
+        name: 'YouTube Views Lifetime Refill [FineSMM Service #3306 - 100% Real Engagement - Non Drop]',
+        category: 'YouTube Views',
+        ratePer1000: 2.10,
+        minQuantity: 100,
+        maxQuantity: 200000,
         status: 'active',
-        speed: 'Delivery: 48 Hours',
-        description: 'Watch hours booster package routed dynamically via PrimeSMM API.',
-        providerId: provider2._id,
-        providerServiceId: '401',
+        speed: 'Speed: 15k/Day (Start: 0-1 Hour)',
+        description: '100% Lifetime Guaranteed Non-Drop Services. Real engagement views with lifetime auto-refill button (FineSMM ID 3306).',
+        providerId: provider1._id,
+        providerServiceId: '3306',
       },
       {
-        name: 'Instagram Organic Likes [JAP Instant Delivery]',
+        name: 'Instagram Likes [JAP Service #4176 - Real Engagement - 100% Non Drop Guaranteed]',
         category: 'Instagram Likes',
         ratePer1000: 0.80,
-        minQuantity: 100,
-        maxQuantity: 50000,
+        minQuantity: 50,
+        maxQuantity: 15000,
         status: 'active',
         speed: 'Instant (10k/Hour)',
-        description: 'Super fast Instagram post and reel likes routed dynamically via JAP API.',
+        description: '100% Lifetime Guaranteed Non-Drop Services. Real Instagram post and reel likes (JAP ID 4176).',
         providerId: provider3._id,
-        providerServiceId: '501',
+        providerServiceId: '4176',
       },
       {
-        name: 'Instagram Followers [JAP Real Profiles]',
+        name: 'Instagram Followers [JAP Service #5951 - Real USA Super Quality - 100% Non Drop]',
         category: 'Instagram Followers',
         ratePer1000: 4.50,
-        minQuantity: 100,
-        maxQuantity: 25000,
+        minQuantity: 50,
+        maxQuantity: 100000,
         status: 'active',
-        speed: 'Speed: 2k/Day',
-        description: 'High quality Instagram followers routed dynamically via JAP API.',
+        speed: 'Speed: 5k/Day',
+        description: '100% Lifetime Guaranteed Non-Drop Services. High quality real profile followers (JAP ID 5951).',
         providerId: provider3._id,
-        providerServiceId: '502',
+        providerServiceId: '5951',
       },
     ];
 
-    console.log('[Seed] Inserting Verified SMM Services...');
+    console.log('[Seed] Inserting Verified 100% Non-Drop SMM Services...');
     const insertedServices = await Service.insertMany(initialServices);
-    console.log(`[Seed Success] Inserted ${insertedServices.length} SMM Services with verified FineSMM Service IDs (4351, 3287, 4035).`);
+    console.log(`[Seed Success] Inserted ${insertedServices.length} SMM Services with verified Zero-Drop Service IDs (4351, 3287, 4035, 3306, 4176, 5951).`);
 
     console.log('[Seed] Creating Default Settings...');
     await Setting.create({
@@ -163,20 +163,17 @@ const seedDatabase = async () => {
     console.log('\n================================================');
     console.log(' SEED COMPLETED SUCCESSFULLY!');
     console.log('================================================');
-    console.log(' DYNAMIC SMM PROVIDERS LOADED:');
-    console.log(`   1. ${provider1.name}: ${provider1.apiUrl}`);
-    console.log(`   2. ${provider2.name}: ${provider2.apiUrl}`);
-    console.log(`   3. ${provider3.name}: ${provider3.apiUrl}`);
-    console.log('------------------------------------------------');
-    console.log(' VERIFIED FINESMM SERVICE IDS:');
-    console.log('   YouTube Likes:       ID 4351 (Min: 50)');
-    console.log('   YouTube Views:       ID 3287 (Min: 100)');
-    console.log('   YouTube Subscribers: ID 4035 (Min: 100)');
+    console.log(' GUARANTEED 0% DROP SERVICE MAPPINGS:');
+    console.log('   YouTube Likes:       ID 4351 (1k/Min | Lifetime Refill | 0% Drop)');
+    console.log('   YouTube Views:       ID 3287 (Real Engagement | 30d Refill | 0% Drop)');
+    console.log('   YouTube Subscribers: ID 4035 (HQ Real Accounts | 0% Drop)');
+    console.log('   YouTube Views (LT):  ID 3306 (Lifetime Refill | Real Engagement)');
+    console.log('   Instagram Likes:     ID 4176 (Non Drop Exclusive | 90d Refill)');
+    console.log('   Instagram Followers: ID 5951 (Super Quality USA | 0% Drop)');
     console.log('------------------------------------------------');
     console.log(' ADMIN CREDENTIALS:');
     console.log('   Email/Login: admin@smm.com (or username: admin)');
     console.log('   Password:    Admin@12345');
-    console.log('   Role:        admin (isUnlimited: true, balance: $999,999)');
     console.log('================================================\n');
 
     process.exit(0);
