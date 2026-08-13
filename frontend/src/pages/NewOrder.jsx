@@ -168,10 +168,70 @@ const NewOrder = () => {
             </select>
           </div>
 
+          {/* Quality Tier Selector Buttons */}
+          {categoryServices.length > 1 && (
+            <div>
+              <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider mb-2">
+                2. Select Quality Tier
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {categoryServices.map((srv) => {
+                  const isSelected = srv._id === selectedServiceId;
+                  const isPremium = srv.name.includes('Premium');
+                  const isStandard = srv.name.includes('Standard');
+                  const isSimple = srv.name.includes('Simple');
+
+                  let tierLabel = 'Standard Tier';
+                  let badgeColor = 'bg-accent-cyan/15 text-accent-cyan border-accent-cyan/30';
+                  if (isPremium) {
+                    tierLabel = 'Premium Tier (Non-Drop)';
+                    badgeColor = 'bg-yt-red/20 text-yt-red border-yt-red/40';
+                  } else if (isSimple) {
+                    tierLabel = 'Simple / Basic Tier';
+                    badgeColor = 'bg-gray-700/50 text-gray-300 border-gray-600';
+                  } else if (isStandard) {
+                    tierLabel = 'Standard (High Quality)';
+                    badgeColor = 'bg-accent-emerald/15 text-accent-emerald border-accent-emerald/30';
+                  }
+
+                  return (
+                    <button
+                      key={srv._id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedServiceId(srv._id);
+                        setQuantity(srv.minQuantity || 1000);
+                      }}
+                      className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
+                        isSelected
+                          ? 'bg-dark-700 border-yt-red shadow-glow ring-1 ring-yt-red'
+                          : 'bg-dark-800/60 border-gray-800 hover:border-gray-700 hover:bg-dark-700/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-md border ${badgeColor}`}>
+                          {tierLabel}
+                        </span>
+                        {isSelected && <CheckCircle2 className="w-4 h-4 text-yt-red" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white line-clamp-1">{srv.name}</div>
+                        <div className="text-sm font-black text-accent-emerald mt-0.5">
+                          ${srv.ratePer1000.toFixed(2)} <span className="text-[10px] text-gray-400 font-normal">/ 1k</span>
+                          <span className="text-[11px] text-gray-400 font-normal ml-1.5">(₹{(srv.ratePer1000 * 82).toFixed(0)})</span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Service Dropdown */}
           <div>
             <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider mb-2">
-              2. Select Service Package
+              3. Service Package Details
             </label>
             <select
               value={selectedServiceId}
@@ -184,7 +244,7 @@ const NewOrder = () => {
             >
               {categoryServices.map((srv) => (
                 <option key={srv._id} value={srv._id} className="bg-dark-800 text-white">
-                  {srv.name} — ${srv.ratePer1000.toFixed(2)} per 1000
+                  {srv.name} — ${srv.ratePer1000.toFixed(2)} / 1000 (₹{(srv.ratePer1000 * 82).toFixed(0)})
                 </option>
               ))}
             </select>
@@ -192,10 +252,11 @@ const NewOrder = () => {
 
           {/* Service Info Box */}
           {currentService && (
-            <div className="p-4 rounded-2xl bg-dark-800/80 border border-gray-800 text-xs text-gray-300 space-y-2">
+            <div className="p-4.5 rounded-2xl bg-dark-800/80 border border-gray-800 text-xs text-gray-300 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2 font-semibold">
-                <span className="text-gray-400">
-                  Rate: <strong className="text-white">${currentService.ratePer1000.toFixed(2)} / 1000</strong>
+                <span className="text-gray-300">
+                  Rate: <strong className="text-accent-emerald text-sm">${currentService.ratePer1000.toFixed(2)} / 1000</strong>
+                  <span className="text-gray-400 text-xs ml-1">(~₹{(currentService.ratePer1000 * 82).toFixed(0)})</span>
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold flex items-center gap-1">
                   🛡️ 100% Lifetime Guaranteed Non-Drop Services
@@ -208,7 +269,7 @@ const NewOrder = () => {
                 </span>
               </div>
               {currentService.description && (
-                <p className="text-gray-400 pt-2 border-t border-gray-800/80">
+                <p className="text-gray-400 pt-2 border-t border-gray-800/80 leading-relaxed">
                   {currentService.description.includes('100% Lifetime Guaranteed Non-Drop') 
                     ? currentService.description 
                     : `100% Lifetime Guaranteed Non-Drop Services. ${currentService.description}`}

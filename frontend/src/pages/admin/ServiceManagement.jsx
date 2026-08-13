@@ -22,10 +22,11 @@ const ServiceManagement = () => {
   });
 
   const categories = [
+    'YouTube Likes',
     'YouTube Views',
     'YouTube Subscribers',
-    'YouTube Likes',
-    'YouTube Watch Hours',
+    'YouTube Comments',
+    'YouTube Watch Time',
     'Instagram Likes',
     'Instagram Followers',
     'Facebook Services',

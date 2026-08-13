@@ -23,11 +23,13 @@ import OrderManagement from './pages/admin/OrderManagement';
 import Settings from './pages/admin/Settings';
 
 const Layout = ({ children }) => {
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+
   return (
     <div className="min-h-screen flex flex-col bg-dark-900">
-      <Navbar />
+      <Navbar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col md:flex-row gap-6">
-        <Sidebar />
+        <Sidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
         <main className="flex-1 min-w-0">{children}</main>
       </div>
     </div>

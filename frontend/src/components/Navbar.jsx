@@ -1,9 +1,9 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Youtube, Wallet, LogOut, ShieldAlert, Sparkles, PlusCircle } from 'lucide-react';
+import { Youtube, Wallet, LogOut, ShieldAlert, Sparkles, PlusCircle, Menu, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
-const Navbar = () => {
+const Navbar = ({ mobileMenuOpen, setMobileMenuOpen }) => {
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
 
@@ -11,21 +11,33 @@ const Navbar = () => {
     <header className="sticky top-0 z-40 w-full glass-card border-b border-gray-800/80 bg-dark-800/90 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         
-        {/* Brand Logo */}
-        <Link to={isAdmin ? "/admin/dashboard" : "/dashboard"} className="flex items-center gap-2.5 group">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-yt-red to-yt-darkRed flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
-            <Youtube className="w-6 h-6 text-white fill-white" />
-          </div>
-          <div>
-            <span className="text-xl font-extrabold tracking-tight text-white flex items-center gap-1.5">
-              Tube<span className="text-yt-red">Boost</span>
-              <span className="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-yt-red/10 text-yt-red border border-yt-red/20">
-                PRO
+        {/* Left Section: Mobile Hamburger Toggle + Brand Logo */}
+        <div className="flex items-center gap-3">
+          {user && (
+            <button
+              onClick={() => setMobileMenuOpen?.(!mobileMenuOpen)}
+              className="p-2 rounded-xl bg-dark-700/80 text-gray-300 hover:text-white hover:bg-dark-600 border border-gray-700/70 transition-all md:hidden"
+              aria-label="Toggle Navigation Drawer"
+            >
+              {mobileMenuOpen ? <X className="w-5 h-5 text-yt-red" /> : <Menu className="w-5 h-5" />}
+            </button>
+          )}
+
+          <Link to={isAdmin ? "/admin/dashboard" : "/dashboard"} className="flex items-center gap-2.5 group">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-yt-red to-yt-darkRed flex items-center justify-center shadow-glow group-hover:scale-105 transition-transform">
+              <Youtube className="w-6 h-6 text-white fill-white" />
+            </div>
+            <div>
+              <span className="text-xl font-extrabold tracking-tight text-white flex items-center gap-1.5">
+                Tube<span className="text-yt-red">Boost</span>
+                <span className="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-yt-red/10 text-yt-red border border-yt-red/20">
+                  PRO
+                </span>
               </span>
-            </span>
-            <span className="text-[11px] text-gray-400 block -mt-1 font-medium">SMM Growth Engine</span>
-          </div>
-        </Link>
+              <span className="text-[11px] text-gray-400 block -mt-1 font-medium">SMM Growth Engine</span>
+            </div>
+          </Link>
+        </div>
 
         {/* User Balance & Role Controls */}
         {user && (
