@@ -65,7 +65,7 @@ const createOrder = async (req, res) => {
     }
 
     const isCommentService = (service.category || '').toLowerCase().includes('comment') || (service.name || '').toLowerCase().includes('comment');
-    const commentsData = comments && typeof comments === 'string' ? comments.replace(/\r\n/g, '\n').trim() : '';
+    const commentsData = (isCommentService && comments && typeof comments === 'string') ? comments.replace(/\r\n/g, '\n').trim() : '';
 
     // 2. Strict Quantity Limits Validation
     if (numericQuantity < service.minQuantity || numericQuantity > service.maxQuantity) {
@@ -102,12 +102,13 @@ const createOrder = async (req, res) => {
 
     console.log(`[Order Controller] Dispatching order for user "${user.username}" (isUnlimited: ${user.isUnlimited})...`);
     
+    // For Default services (like AI Random Comments, Likes, Views), pass empty string so payload is strictly key, action, service, link, quantity
     const providerResult = await SmmProviderService.addOrder(
       provider,
       providerServiceId,
       link.trim(),
       numericQuantity,
-      commentsData
+      ""
     );
 
     let providerOrderId = '';
