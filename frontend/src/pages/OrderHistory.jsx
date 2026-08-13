@@ -117,6 +117,7 @@ const OrderHistory = () => {
                   <th className="pb-3 px-3">Service Name</th>
                   <th className="pb-3 px-3">Target Link</th>
                   <th className="pb-3 px-3">Quantity</th>
+                  <th className="pb-3 px-3">Start Count</th>
                   <th className="pb-3 px-3">Remains</th>
                   <th className="pb-3 px-3">Cost</th>
                   <th className="pb-3 px-3">Status / API Note</th>
@@ -150,6 +151,9 @@ const OrderHistory = () => {
                     </td>
                     <td className="py-4 px-3 font-semibold text-gray-200">
                       {ord.quantity.toLocaleString()}
+                    </td>
+                    <td className="py-4 px-3 font-semibold text-gray-300">
+                      {ord.startCount !== undefined ? ord.startCount.toLocaleString() : 0}
                     </td>
                     <td className="py-4 px-3 font-semibold text-accent-amber">
                       {ord.remains !== undefined ? ord.remains.toLocaleString() : 0}

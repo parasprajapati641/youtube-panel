@@ -52,10 +52,12 @@ const syncOrdersStatus = async (inputOrders = null) => {
       const statusMap = await SmmProviderService.getOrderStatus(provider, providerOrderIds);
 
       for (const ord of orders) {
-        const extStatus = statusMap[ord.providerOrderId];
+        // Handle both map response { "123": { status: "..." } } and direct object { status: "..." }
+        const extStatus = statusMap[ord.providerOrderId] || (statusMap.status ? statusMap : null);
+
         if (extStatus) {
           let newStatus = ord.status;
-          const rawStatus = (extStatus.status || '').toLowerCase();
+          const rawStatus = String(extStatus.status || '').toLowerCase();
 
           if (rawStatus.includes('completed')) {
             newStatus = 'Completed';
@@ -69,21 +71,35 @@ const syncOrdersStatus = async (inputOrders = null) => {
             newStatus = 'Pending';
           }
 
+          let remainsUpdated = false;
+          let startCountUpdated = false;
+
           if (extStatus.remains !== undefined && extStatus.remains !== null && extStatus.remains !== '') {
-            ord.remains = Number(extStatus.remains) || 0;
-          }
-          if (extStatus.start_count !== undefined && extStatus.start_count !== null && extStatus.start_count !== '') {
-            ord.startCount = Number(extStatus.start_count) || 0;
+            const parsedRemains = Number(extStatus.remains);
+            if (!isNaN(parsedRemains) && ord.remains !== parsedRemains) {
+              ord.remains = parsedRemains;
+              remainsUpdated = true;
+            }
           }
 
-          if (newStatus !== ord.status || extStatus.remains !== undefined) {
-            if (newStatus !== ord.status) {
-              console.log(`[Order Status Update] Order #${ord._id.toString().slice(-6)}: ${ord.status} -> ${newStatus}`);
+          if (extStatus.start_count !== undefined && extStatus.start_count !== null && extStatus.start_count !== '') {
+            const parsedStartCount = Number(extStatus.start_count);
+            if (!isNaN(parsedStartCount) && ord.startCount !== parsedStartCount) {
+              ord.startCount = parsedStartCount;
+              startCountUpdated = true;
+            }
+          }
+
+          const statusChanged = newStatus !== ord.status;
+
+          if (statusChanged || remainsUpdated || startCountUpdated) {
+            if (statusChanged) {
+              console.log(`[Order Status Update] Order #${ord._id.toString().slice(-6)} (Ext: ${ord.providerOrderId}): ${ord.status} -> ${newStatus}`);
               ord.status = newStatus;
             }
 
             // Handle refund if status changed to Canceled
-            if (newStatus === 'Canceled') {
+            if (statusChanged && newStatus === 'Canceled') {
               const user = await User.findById(ord.userId);
               if (user && !user.isUnlimited) {
                 user.balance = Number((user.balance + ord.totalCost).toFixed(4));
