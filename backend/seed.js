@@ -74,42 +74,42 @@ const seedDatabase = async () => {
     console.log(`[Seed Success] Demo User created: demo_user / userpassword123 (Balance: $${demoUser.balance})`);
 
     const initialServices = [
-      // 1. YouTube Likes (Cheapest Active Provider IDs)
+      // 1. YouTube Likes (FineSMM Service ID 4351)
       {
         name: 'YouTube Likes [Wholesale Low-Cost | 30d Refill | Instant Start]',
         category: 'YouTube Likes',
-        ratePer1000: 0.35,
+        ratePer1000: 0.85,
         minQuantity: 10,
         maxQuantity: 100000,
         status: 'active',
         speed: 'Speed: 25k/Day (Start: Instant)',
-        description: 'Absolute cheapest wholesale rate real YouTube likes with 30-day refill guarantee (JAP ID 7975 - Wholesale Rate: $0.25 / ~₹20 per 1k).',
-        providerId: provider3._id,
-        providerServiceId: '7975',
+        description: 'Wholesale rate real YouTube likes (FineSMM ID 4351).',
+        providerId: provider1._id,
+        providerServiceId: '4351',
       },
       {
         name: 'YouTube Likes [Standard - Fast Delivery Active Profiles]',
         category: 'YouTube Likes',
-        ratePer1000: 1.65,
+        ratePer1000: 1.25,
         minQuantity: 10,
         maxQuantity: 100000,
         status: 'active',
         speed: 'Speed: 1k-5k/Min (Start: Instant)',
-        description: 'Active YouTube video likes from real active profiles (FineSMM ID 4359).',
+        description: 'Active YouTube video likes from real active profiles (FineSMM ID 4351).',
         providerId: provider1._id,
-        providerServiceId: '4359',
+        providerServiceId: '4351',
       },
       {
         name: 'YouTube Likes [Premium - 100% Non-Drop Referrer Guaranteed]',
         category: 'YouTube Likes',
-        ratePer1000: 2.20,
+        ratePer1000: 1.80,
         minQuantity: 10,
         maxQuantity: 100000,
         status: 'active',
         speed: 'Instant 1k/Min delivery (0% Drop Guaranteed)',
-        description: '100% Lifetime Guaranteed Non-Drop YouTube Likes with social referrer origin (FineSMM ID 4360).',
+        description: '100% Lifetime Guaranteed Non-Drop YouTube Likes with social referrer origin (FineSMM ID 4351).',
         providerId: provider1._id,
-        providerServiceId: '4360',
+        providerServiceId: '4351',
       },
 
       // 2. YouTube Views (Includes Wholesale AdWords & High Retention Tiers)
