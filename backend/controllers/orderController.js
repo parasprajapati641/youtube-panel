@@ -67,25 +67,7 @@ const createOrder = async (req, res) => {
     const isCommentService = (service.category || '').toLowerCase().includes('comment') || (service.name || '').toLowerCase().includes('comment');
     const commentsData = comments && typeof comments === 'string' ? comments.replace(/\r\n/g, '\n').trim() : '';
 
-    // 2. Custom Comments Validation
-    if (isCommentService) {
-      if (!commentsData) {
-        return res.status(400).json({ message: 'Custom comments are required for this service (one comment per line)' });
-      }
-      const commentLines = commentsData.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
-      if (commentLines.length < service.minQuantity) {
-        return res.status(400).json({
-          message: `Minimum ${service.minQuantity} custom comments required. Provided ${commentLines.length} comment(s).`,
-        });
-      }
-      if (commentLines.length > service.maxQuantity) {
-        return res.status(400).json({
-          message: `Maximum ${service.maxQuantity} custom comments allowed. Provided ${commentLines.length} comment(s).`,
-        });
-      }
-    }
-
-    // 3. Strict Quantity Limits Validation
+    // 2. Strict Quantity Limits Validation
     if (numericQuantity < service.minQuantity || numericQuantity > service.maxQuantity) {
       return res.status(400).json({
         message: `Quantity must be between ${service.minQuantity.toLocaleString()} and ${service.maxQuantity.toLocaleString()} for this service`,
