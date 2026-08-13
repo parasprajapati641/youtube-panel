@@ -5,6 +5,33 @@ const ApiProvider = require('../models/ApiProvider');
 const SmmProviderService = require('../services/smmProviderService');
 const { syncOrdersStatus } = require('../services/cronService');
 
+// Generic positive comments bank for auto-constructing comments payload for SMM Provider APIs
+const GENERIC_POSITIVE_COMMENTS = [
+  "Great video! Thanks for sharing!",
+  "Awesome content, keep it up!",
+  "Very informative and helpful!",
+  "Loved this! Subscribed to your channel!",
+  "Super clean explanation, awesome job!",
+  "Top quality video, thanks!",
+  "Really well done! Looking forward to more!",
+  "Great work! Very engaging content!",
+  "Nice video! Really enjoyed watching!",
+  "Fantastic content! Keep up the good work!",
+  "This is super helpful, thanks a lot!",
+  "Loved every bit of this video!",
+  "Awesome presentation and quality!",
+  "Great explanation! Easy to follow!",
+  "Very good content, highly appreciated!"
+];
+
+const generateAutoComments = (count) => {
+  const list = [];
+  for (let i = 0; i < count; i++) {
+    list.push(GENERIC_POSITIVE_COMMENTS[i % GENERIC_POSITIVE_COMMENTS.length]);
+  }
+  return list.join('\n');
+};
+
 // Helper to validate target URL format
 const isValidTargetUrl = (urlString) => {
   if (!urlString || typeof urlString !== 'string') return false;
@@ -65,7 +92,13 @@ const createOrder = async (req, res) => {
     }
 
     const isCommentService = (service.category || '').toLowerCase().includes('comment') || (service.name || '').toLowerCase().includes('comment');
-    const commentsData = (isCommentService && comments && typeof comments === 'string') ? comments.replace(/\r\n/g, '\n').trim() : '';
+    let commentsData = comments && typeof comments === 'string' ? comments.replace(/\r\n/g, '\n').trim() : '';
+
+    // Auto-generate generic positive comments server-side if comments payload is missing for YouTube Comments
+    if (isCommentService && !commentsData) {
+      commentsData = generateAutoComments(numericQuantity);
+      console.log(`[Order Controller] Auto-generated ${numericQuantity} generic positive comments for Provider API payload.`);
+    }
 
     // 2. Strict Quantity Limits Validation
     if (numericQuantity < service.minQuantity || numericQuantity > service.maxQuantity) {
@@ -102,13 +135,12 @@ const createOrder = async (req, res) => {
 
     console.log(`[Order Controller] Dispatching order for user "${user.username}" (isUnlimited: ${user.isUnlimited})...`);
     
-    // For Default services (like AI Random Comments, Likes, Views), pass empty string so payload is strictly key, action, service, link, quantity
     const providerResult = await SmmProviderService.addOrder(
       provider,
       providerServiceId,
       link.trim(),
       numericQuantity,
-      ""
+      commentsData
     );
 
     let providerOrderId = '';
