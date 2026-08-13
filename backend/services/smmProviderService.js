@@ -56,21 +56,27 @@ class SmmProviderService {
   /**
    * Submit new order to external SMM Provider API via application/x-www-form-urlencoded
    */
-  static async addOrder(provider, providerServiceId, link, quantity) {
+  static async addOrder(provider, providerServiceId, link, quantity, comments) {
     const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || 'https://finesmmpanel.com/api/v2';
     const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || 'ba984cfb277e7e9158a93473b6f26bfb';
 
     console.log(`[SMM Provider API Dispatch] Target URL: ${apiUrl}`);
-    console.log(`[SMM Provider Form Params]: key=${apiKey.slice(0, 6)}... action=add service=${providerServiceId} link=${link} quantity=${quantity}`);
+    console.log(`[SMM Provider Form Params]: key=${apiKey.slice(0, 6)}... action=add service=${providerServiceId} link=${link} quantity=${quantity}${comments ? ' comments=' + comments.slice(0, 20) + '...' : ''}`);
 
     try {
-      const response = await postForm(apiUrl, {
+      const payload = {
         key: apiKey,
         action: 'add',
         service: String(providerServiceId),
         link: String(link),
         quantity: String(quantity),
-      });
+      };
+
+      if (comments && typeof comments === 'string' && comments.trim() !== '') {
+        payload.comments = comments.replace(/\r\n/g, '\n').trim();
+      }
+
+      const response = await postForm(apiUrl, payload);
 
       console.log('[SMM Provider Exact Response Data]:', JSON.stringify(response));
 

@@ -21,6 +21,10 @@ const orderSchema = new mongoose.Schema({
     required: [true, 'Quantity is required'],
     min: 1,
   },
+  comments: {
+    type: String,
+    default: '',
+  },
   totalCost: {
     type: Number,
     required: true,

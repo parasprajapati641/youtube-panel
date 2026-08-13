@@ -5,29 +5,90 @@ const ApiProvider = require('../models/ApiProvider');
 const SmmProviderService = require('../services/smmProviderService');
 const { syncOrdersStatus } = require('../services/cronService');
 
+// Helper to validate target URL format
+const isValidTargetUrl = (urlString) => {
+  if (!urlString || typeof urlString !== 'string') return false;
+  const trimmed = urlString.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+  try {
+    new URL(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Helper to convert raw provider API errors into friendly JSON user messages
+const formatProviderError = (rawError) => {
+  if (!rawError || typeof rawError !== 'string') {
+    return 'Unable to process order with provider API. Please try another quality tier.';
+  }
+  const lower = rawError.toLowerCase();
+  if (lower.includes('not enough balance') || lower.includes('low balance') || lower.includes('api balance')) {
+    return 'This service package is undergoing temporary provider maintenance. Please try another tier.';
+  }
+  if (lower.includes('invalid link') || lower.includes('bad link') || lower.includes('link format')) {
+    return 'The target link format was rejected by the SMM provider. Please verify your link.';
+  }
+  if (lower.includes('quantity') || lower.includes('min') || lower.includes('max')) {
+    return 'The requested order quantity does not match the provider limits for this package.';
+  }
+  if (lower.includes('service disabled') || lower.includes('service inactive') || lower.includes('not found')) {
+    return 'Selected service package is currently inactive. Please choose a different quality tier.';
+  }
+  return `Provider API Error: ${rawError}`;
+};
+
 // @route   POST /api/orders
 // @desc    Place a new order & auto-dispatch to external SMM Provider API
 const createOrder = async (req, res) => {
   try {
-    const { serviceId, link, quantity } = req.body;
+    const { serviceId, link, quantity, comments } = req.body;
 
-    if (!serviceId || !link || !quantity) {
-      return res.status(400).json({ message: 'Service, Link, and Quantity are required' });
+    if (!serviceId || !link || quantity === undefined || quantity === null) {
+      return res.status(400).json({ message: 'Service, Target Link, and Quantity are required' });
+    }
+
+    // 1. Target URL Validation
+    if (!isValidTargetUrl(link)) {
+      return res.status(400).json({ message: 'Please provide a valid target URL starting with http:// or https://' });
     }
 
     const numericQuantity = Number(quantity);
     if (isNaN(numericQuantity) || numericQuantity <= 0) {
-      return res.status(400).json({ message: 'Quantity must be a positive number' });
+      return res.status(400).json({ message: 'Quantity must be a valid positive number' });
     }
 
     const service = await Service.findById(serviceId).populate('providerId');
     if (!service || service.status !== 'active') {
-      return res.status(404).json({ message: 'Selected service is inactive or not found' });
+      return res.status(404).json({ message: 'Selected service package is inactive or not found' });
     }
 
+    const isCommentService = (service.category || '').toLowerCase().includes('comment') || (service.name || '').toLowerCase().includes('comment');
+    const commentsData = comments && typeof comments === 'string' ? comments.replace(/\r\n/g, '\n').trim() : '';
+
+    // 2. Custom Comments Validation
+    if (isCommentService) {
+      if (!commentsData) {
+        return res.status(400).json({ message: 'Custom comments are required for this service (one comment per line)' });
+      }
+      const commentLines = commentsData.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+      if (commentLines.length < service.minQuantity) {
+        return res.status(400).json({
+          message: `Minimum ${service.minQuantity} custom comments required. Provided ${commentLines.length} comment(s).`,
+        });
+      }
+      if (commentLines.length > service.maxQuantity) {
+        return res.status(400).json({
+          message: `Maximum ${service.maxQuantity} custom comments allowed. Provided ${commentLines.length} comment(s).`,
+        });
+      }
+    }
+
+    // 3. Strict Quantity Limits Validation
     if (numericQuantity < service.minQuantity || numericQuantity > service.maxQuantity) {
       return res.status(400).json({
-        message: `Quantity must be between ${service.minQuantity} and ${service.maxQuantity}`,
+        message: `Quantity must be between ${service.minQuantity.toLocaleString()} and ${service.maxQuantity.toLocaleString()} for this service`,
       });
     }
 
@@ -63,7 +124,8 @@ const createOrder = async (req, res) => {
       provider,
       providerServiceId,
       link.trim(),
-      numericQuantity
+      numericQuantity,
+      commentsData
     );
 
     let providerOrderId = '';
@@ -89,6 +151,7 @@ const createOrder = async (req, res) => {
       serviceId: service._id,
       link: link.trim(),
       quantity: numericQuantity,
+      comments: commentsData,
       totalCost,
       providerOrderId,
       apiErrorDetails,
@@ -99,8 +162,9 @@ const createOrder = async (req, res) => {
     const populatedOrder = await Order.findById(newOrder._id).populate('serviceId', 'name category ratePer1000 speed');
 
     if (!providerResult.success) {
+      const friendlyMessage = formatProviderError(apiErrorDetails);
       return res.status(400).json({
-        message: `Provider API Error: ${apiErrorDetails}`,
+        message: friendlyMessage,
         order: populatedOrder,
         apiErrorDetails,
         newBalance: user.balance,

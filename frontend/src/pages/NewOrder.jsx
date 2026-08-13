@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingCart, Link as LinkIcon, Hash, DollarSign, AlertCircle, CheckCircle2, Sparkles } from 'lucide-react';
+import { ShoppingCart, Link as LinkIcon, Hash, DollarSign, AlertCircle, CheckCircle2, Sparkles, MessageSquare } from 'lucide-react';
 
 const NewOrder = () => {
   const { user, updateBalance } = useAuth();
@@ -16,6 +16,7 @@ const NewOrder = () => {
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [link, setLink] = useState('');
   const [quantity, setQuantity] = useState(1000);
+  const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // Fetch active services
@@ -43,20 +44,50 @@ const NewOrder = () => {
     return services.filter((s) => s.category === selectedCategory);
   }, [services, selectedCategory]);
 
-  // Update selected service when category changes
-  useEffect(() => {
-    if (categoryServices.length > 0) {
-      setSelectedServiceId(categoryServices[0]._id);
-      setQuantity(categoryServices[0].minQuantity || 1000);
-    } else {
-      setSelectedServiceId('');
-    }
-  }, [selectedCategory, categoryServices]);
-
   // Get currently selected service object
   const currentService = useMemo(() => {
     return services.find((s) => s._id === selectedServiceId) || null;
   }, [services, selectedServiceId]);
+
+  // Check if selected service/category is for custom comments
+  const isCommentService = useMemo(() => {
+    if (!currentService && categoryServices.length === 0) return false;
+    const cat = (selectedCategory || '').toLowerCase();
+    const name = (currentService?.name || '').toLowerCase();
+    return cat.includes('comment') || name.includes('comment');
+  }, [currentService, selectedCategory, categoryServices]);
+
+  // Dynamic non-empty comment lines count
+  const commentsLinesCount = useMemo(() => {
+    if (!comments) return 0;
+    return comments
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0).length;
+  }, [comments]);
+
+  // Auto-sync quantity when comment lines change or when switching to comment service
+  useEffect(() => {
+    if (isCommentService) {
+      setQuantity(commentsLinesCount);
+    }
+  }, [commentsLinesCount, isCommentService]);
+
+  // Update selected service when category changes
+  useEffect(() => {
+    if (categoryServices.length > 0) {
+      const firstSrv = categoryServices[0];
+      setSelectedServiceId(firstSrv._id);
+      const isComm = (firstSrv.category || '').toLowerCase().includes('comment') || (firstSrv.name || '').toLowerCase().includes('comment');
+      if (isComm) {
+        setQuantity(commentsLinesCount);
+      } else {
+        setQuantity(firstSrv.minQuantity || 1000);
+      }
+    } else {
+      setSelectedServiceId('');
+    }
+  }, [selectedCategory, categoryServices]);
 
   // Auto calculate total cost: (quantity / 1000) * ratePer1000
   const calculatedCost = useMemo(() => {
@@ -70,6 +101,13 @@ const NewOrder = () => {
 
   const isBalanceSufficient = user?.isUnlimited || (user?.balance || 0) >= calculatedCost;
 
+  const minLimit = currentService?.minQuantity || 1;
+  const maxLimit = currentService?.maxQuantity || 1000000;
+  const isQuantityTooLow = currentService ? quantity < minLimit : false;
+  const isQuantityTooHigh = currentService ? quantity > maxLimit : false;
+  const isQuantityInvalid = isQuantityTooLow || isQuantityTooHigh;
+  const isCommentRequiredMissing = isCommentService && (!comments.trim() || commentsLinesCount < minLimit);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedServiceId) {
@@ -80,6 +118,18 @@ const NewOrder = () => {
       toast.error('Please enter a valid target link');
       return;
     }
+
+    if (isCommentService) {
+      if (!comments.trim()) {
+        toast.error('Please enter your custom comments (one per line)');
+        return;
+      }
+      if (currentService && commentsLinesCount < currentService.minQuantity) {
+        toast.error(`Minimum ${currentService.minQuantity} comments required for this service (you entered ${commentsLinesCount})`);
+        return;
+      }
+    }
+
     if (!quantity || quantity <= 0) {
       toast.error('Please enter a valid quantity');
       return;
@@ -103,6 +153,7 @@ const NewOrder = () => {
         serviceId: selectedServiceId,
         link: link.trim(),
         quantity: Number(quantity),
+        comments: isCommentService ? comments.trim() : undefined,
       });
 
       toast.success(res.data.message || 'Order placed successfully!');
@@ -200,7 +251,12 @@ const NewOrder = () => {
                       type="button"
                       onClick={() => {
                         setSelectedServiceId(srv._id);
-                        setQuantity(srv.minQuantity || 1000);
+                        const isComm = (srv.category || '').toLowerCase().includes('comment') || (srv.name || '').toLowerCase().includes('comment');
+                        if (isComm) {
+                          setQuantity(commentsLinesCount);
+                        } else {
+                          setQuantity(srv.minQuantity || 1000);
+                        }
                       }}
                       className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
                         isSelected
@@ -238,7 +294,14 @@ const NewOrder = () => {
               onChange={(e) => {
                 setSelectedServiceId(e.target.value);
                 const s = services.find((srv) => srv._id === e.target.value);
-                if (s) setQuantity(s.minQuantity || 1000);
+                if (s) {
+                  const isComm = (s.category || '').toLowerCase().includes('comment') || (s.name || '').toLowerCase().includes('comment');
+                  if (isComm) {
+                    setQuantity(commentsLinesCount);
+                  } else {
+                    setQuantity(s.minQuantity || 1000);
+                  }
+                }
               }}
               className="w-full px-4 py-3 rounded-xl glass-input text-sm font-semibold cursor-pointer"
             >
@@ -281,7 +344,7 @@ const NewOrder = () => {
           {/* Target Link */}
           <div>
             <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider mb-2">
-              3. Target Link / URL
+              4. Target Link / URL
             </label>
             <div className="relative">
               <LinkIcon className="w-5 h-5 absolute left-3.5 top-3.5 text-gray-500" />
@@ -296,24 +359,93 @@ const NewOrder = () => {
             </div>
           </div>
 
+          {/* Custom Comments Textarea (If comments service) */}
+          {isCommentService && (
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <MessageSquare className="w-4 h-4 text-yt-red" />
+                  Enter Custom Comments (One comment per line)
+                </span>
+                <span className={`text-[11px] font-bold ${commentsLinesCount < minLimit ? 'text-yt-red' : 'text-accent-cyan'}`}>
+                  {commentsLinesCount} comment{commentsLinesCount === 1 ? '' : 's'} typed
+                </span>
+              </label>
+              <textarea
+                rows={5}
+                required={isCommentService}
+                value={comments}
+                onChange={(e) => setComments(e.target.value)}
+                placeholder={`Awesome content!\nThanks for sharing this video!\nGreat explanation, keep it up!\nVery helpful tutorial!`}
+                className="w-full p-4 rounded-xl glass-input text-sm font-medium focus:ring-2 focus:ring-yt-red resize-y"
+              />
+              <p className="text-[11px] text-gray-400 flex items-center justify-between">
+                <span>Each non-empty line counts as 1 comment. Quantity updates automatically.</span>
+                {currentService && (
+                  <span className={commentsLinesCount < minLimit ? 'text-yt-red font-bold' : 'text-emerald-400 font-bold'}>
+                    Min required: {minLimit}
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+
           {/* Quantity */}
           <div>
-            <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider mb-2">
-              4. Quantity
+            <label className="block text-xs font-bold text-gray-300 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>5. Quantity</span>
+              {currentService && (
+                <span className="text-[11px] font-normal text-gray-400">
+                  Min: <strong className="text-accent-cyan">{minLimit.toLocaleString()}</strong> — Max: <strong className="text-accent-cyan">{maxLimit.toLocaleString()}</strong>
+                </span>
+              )}
             </label>
             <div className="relative">
               <Hash className="w-5 h-5 absolute left-3.5 top-3.5 text-gray-500" />
               <input
                 type="number"
                 required
-                min={currentService?.minQuantity || 1}
-                max={currentService?.maxQuantity || 1000000}
+                min={minLimit}
+                max={maxLimit}
+                readOnly={isCommentService}
                 value={quantity}
-                onChange={(e) => setQuantity(Number(e.target.value))}
-                className="w-full pl-11 pr-4 py-3 rounded-xl glass-input text-sm font-bold"
+                onChange={(e) => {
+                  if (!isCommentService) {
+                    setQuantity(Number(e.target.value));
+                  }
+                }}
+                className={`w-full pl-11 pr-4 py-3 rounded-xl glass-input text-sm font-bold ${
+                  isCommentService ? 'bg-dark-800/80 text-gray-300 cursor-not-allowed' : ''
+                }`}
               />
             </div>
+            {isCommentService && (
+              <p className="text-[11px] text-accent-cyan mt-1 font-medium">
+                ⚡ Quantity automatically synced to your {commentsLinesCount} comment line(s).
+              </p>
+            )}
           </div>
+
+          {/* Quantity Limit Validation Warning Banner */}
+          {currentService && isQuantityTooLow && (
+            <div className="p-4 rounded-2xl bg-yt-red/15 border border-yt-red/40 text-yt-red text-xs font-bold flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>
+                {isCommentService
+                  ? `Minimum ${minLimit} custom comments required for this service. You currently have entered ${commentsLinesCount} comment line(s).`
+                  : `Quantity (${quantity}) is below the minimum limit of ${minLimit.toLocaleString()} required for this service.`}
+              </span>
+            </div>
+          )}
+
+          {currentService && isQuantityTooHigh && (
+            <div className="p-4 rounded-2xl bg-yt-red/15 border border-yt-red/40 text-yt-red text-xs font-bold flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>
+                Quantity ({quantity}) exceeds the maximum limit of {maxLimit.toLocaleString()} for this service.
+              </span>
+            </div>
+          )}
 
           {/* Total Price Calculation Summary Card */}
           <div className="p-5 rounded-2xl bg-gradient-to-r from-dark-800 to-dark-700/60 border border-gray-800 flex items-center justify-between">
@@ -349,9 +481,9 @@ const NewOrder = () => {
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={submitting || !isBalanceSufficient}
+            disabled={submitting || !isBalanceSufficient || isQuantityInvalid || isCommentRequiredMissing}
             className={`w-full py-4 px-6 rounded-2xl font-extrabold text-sm uppercase tracking-wider shadow-glow transition-all flex items-center justify-center gap-2 ${
-              isBalanceSufficient
+              isBalanceSufficient && !isQuantityInvalid && !isCommentRequiredMissing
                 ? 'bg-gradient-to-r from-yt-red to-yt-darkRed hover:from-yt-lightRed hover:to-yt-red text-white cursor-pointer'
                 : 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700'
             }`}
