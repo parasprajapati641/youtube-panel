@@ -21,12 +21,23 @@ const GENERIC_POSITIVE_COMMENTS = [
   "Loved every bit of this video!",
   "Awesome presentation and quality!",
   "Great explanation! Easy to follow!",
-  "Very good content, highly appreciated!"
+  "Very good content, highly appreciated!",
+  "Super helpful insights! Really appreciated!",
+  "Outstanding production quality!",
+  "Keep making amazing videos like this!",
+  "Subbed and liked! Excellent video!",
+  "Clear, concise and super helpful!",
+  "Great job on this video! Really helpful!",
+  "Amazing explanation, thanks for sharing!",
+  "Brilliant content as always!",
+  "Super helpful tutorial, thank you!",
+  "Loved the detailed breakdown!"
 ];
 
-const generateAutoComments = (count) => {
-  const list = [];
-  for (let i = 0; i < count; i++) {
+const generateAutoComments = (count, existingLines = []) => {
+  const list = [...existingLines];
+  const startIdx = list.length;
+  for (let i = startIdx; i < count; i++) {
     list.push(GENERIC_POSITIVE_COMMENTS[i % GENERIC_POSITIVE_COMMENTS.length]);
   }
   return list.join('\n');
@@ -76,14 +87,14 @@ const createOrder = async (req, res) => {
       return res.status(400).json({ message: 'Service, Target Link, and Quantity are required' });
     }
 
-    // 1. Target URL Validation
+    // 1. Target URL Format Validation
     if (!isValidTargetUrl(link)) {
       return res.status(400).json({ message: 'Please provide a valid target URL starting with http:// or https://' });
     }
 
     const numericQuantity = Number(quantity);
-    if (isNaN(numericQuantity) || numericQuantity <= 0) {
-      return res.status(400).json({ message: 'Quantity must be a valid positive number' });
+    if (isNaN(numericQuantity) || !Number.isInteger(numericQuantity) || numericQuantity <= 0) {
+      return res.status(400).json({ message: 'Quantity must be a valid positive integer' });
     }
 
     const service = await Service.findById(serviceId).populate('providerId');
@@ -91,20 +102,23 @@ const createOrder = async (req, res) => {
       return res.status(404).json({ message: 'Selected service package is inactive or not found' });
     }
 
-    const isCommentService = (service.category || '').toLowerCase().includes('comment') || (service.name || '').toLowerCase().includes('comment');
-    let commentsData = comments && typeof comments === 'string' ? comments.replace(/\r\n/g, '\n').trim() : '';
-
-    // Auto-generate generic positive comments server-side if comments payload is missing for YouTube Comments
-    if (isCommentService && !commentsData) {
-      commentsData = generateAutoComments(numericQuantity);
-      console.log(`[Order Controller] Auto-generated ${numericQuantity} generic positive comments for Provider API payload.`);
-    }
-
-    // 2. Strict Quantity Limits Validation
+    // 2. Strict Quantity Limits Bounds Validation before provider API call
     if (numericQuantity < service.minQuantity || numericQuantity > service.maxQuantity) {
       return res.status(400).json({
         message: `Quantity must be between ${service.minQuantity.toLocaleString()} and ${service.maxQuantity.toLocaleString()} for this service`,
       });
+    }
+
+    const isCommentService = (service.category || '').toLowerCase().includes('comment') || (service.name || '').toLowerCase().includes('comment');
+    let commentsData = comments && typeof comments === 'string' ? comments.replace(/\r\n/g, '\n').trim() : '';
+
+    // Auto-inject positive engaging generic comments array server-side for comment services if missing or under count
+    if (isCommentService) {
+      const existingLines = commentsData ? commentsData.split('\n').map((l) => l.trim()).filter((l) => l.length > 0) : [];
+      if (existingLines.length < numericQuantity) {
+        commentsData = generateAutoComments(numericQuantity, existingLines);
+        console.log(`[Order Controller] Zero-Friction: Injected ${numericQuantity} positive engaging generic comments server-side for provider dispatch.`);
+      }
     }
 
     // Calculate total cost
