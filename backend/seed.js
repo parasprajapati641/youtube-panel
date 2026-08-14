@@ -74,43 +74,44 @@ const seedDatabase = async () => {
     console.log(`[Seed Success] Demo User created: demo_user / userpassword123 (Balance: $${demoUser.balance})`);
 
     const initialServices = [
-      // 1. YouTube Likes (FineSMM Service ID 4351 - Top Quality Non-Drop)
+      // 1. YouTube Likes (FineSMM Service ID 3272 - Real High Quality Rank Booster Non-Drop Auto-Refill)
       {
-        name: 'YouTube Likes [Wholesale Low-Cost | Top Quality Non-Drop | Instant Start]',
+        name: 'YouTube Likes [Wholesale Low-Cost | Real Rank Booster | Non-Drop Auto-Refill]',
         category: 'YouTube Likes',
         ratePer1000: 0.85,
-        minQuantity: 10,
-        maxQuantity: 100000,
+        minQuantity: 50,
+        maxQuantity: 10000,
         status: 'active',
-        speed: 'Speed: 25k/Day (Start: Instant)',
-        description: 'Wholesale rate top quality non-drop YouTube likes that register naturally on YouTube analytics (FineSMM ID 4351).',
+        speed: 'Speed: 10k/Day (Start: 0-15 Min)',
+        description: 'Real high quality YouTube likes with natural drip-rate and 30-day auto-refill for algorithm rank boosting (FineSMM ID 3272).',
         providerId: provider1._id,
-        providerServiceId: '4351',
+        providerServiceId: '3272',
       },
       {
-        name: 'YouTube Likes [Standard - Fast Active Profiles | Natural Analytics]',
+        name: 'YouTube Likes [Standard - Fast Active Profiles | Rank Booster Auto-Refill]',
         category: 'YouTube Likes',
         ratePer1000: 1.25,
-        minQuantity: 10,
-        maxQuantity: 100000,
+        minQuantity: 50,
+        maxQuantity: 10000,
         status: 'active',
-        speed: 'Speed: 1k-5k/Min (Start: Instant)',
-        description: 'Active YouTube video likes from real active profiles registering naturally on YouTube analytics (FineSMM ID 4351).',
+        speed: 'Speed: 10k/Day (Start: 0-15 Min)',
+        description: 'Active YouTube video likes from real active profiles with 30-day auto-refill registering naturally on analytics (FineSMM ID 3272).',
         providerId: provider1._id,
-        providerServiceId: '4351',
+        providerServiceId: '3272',
       },
       {
-        name: 'YouTube Likes [Premium - 100% Non-Drop Top Quality | Natural Analytics Guaranteed]',
+        name: 'YouTube Likes [Premium - 100% Real Non-Drop HQ | Algorithm Rank Booster]',
         category: 'YouTube Likes',
         ratePer1000: 1.80,
-        minQuantity: 10,
-        maxQuantity: 100000,
+        minQuantity: 50,
+        maxQuantity: 10000,
         status: 'active',
-        speed: 'Instant 1k/Min delivery (0% Drop Guaranteed)',
-        description: '100% Lifetime Guaranteed Non-Drop Top Quality YouTube Likes registering naturally on YouTube analytics (FineSMM ID 4351).',
+        speed: 'Speed: 10k/Day (Start: 0-15 Min | 30d Auto-Refill)',
+        description: '100% Real HQ non-drop YouTube likes with natural drip-rate for algorithm rank boosting (FineSMM ID 3272).',
         providerId: provider1._id,
-        providerServiceId: '4351',
+        providerServiceId: '3272',
       },
+
 
       // 2. YouTube Views (High Retention AdWords / Suggested Views for Long Videos & Shorts Algorithm Booster)
       {
