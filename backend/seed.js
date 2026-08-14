@@ -74,40 +74,40 @@ const seedDatabase = async () => {
     console.log(`[Seed Success] Demo User created: demo_user / userpassword123 (Balance: $${demoUser.balance})`);
 
     const initialServices = [
-      // 1. YouTube Likes (HARDCODED ALL TIERS TO FINESMM ID 4351: ~₹126/1k, ~₹6.30 for 50 likes)
+      // 1. YouTube Likes (FineSMM ID 4351 - Natural Steady Slow Delivery ~3k-5k/Hour | ~₹126/1k, ~₹6.30 for 50 likes)
       {
-        name: 'YouTube Likes [Wholesale Low-Cost | Algorithm Discovery Booster | Non-Drop Auto-Refill]',
+        name: 'YouTube Likes [Wholesale Low-Cost | Natural Steady Pacing | Non-Drop Auto-Refill]',
         category: 'YouTube Likes',
         ratePer1000: 1.50,
         minQuantity: 50,
         maxQuantity: 10000,
         status: 'active',
-        speed: 'Speed: 10k/Day (Start: 0-15 Min)',
-        description: 'Real high quality YouTube likes with natural drip-rate and 30-day auto-refill for algorithm discovery boosting (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
+        speed: 'Speed: 3k-5k/Hour Natural Pacing (Start: 0-15 Min)',
+        description: 'Real high quality YouTube likes with natural steady pacing (~3k-5k/hour, 50-100 likes delivered over minutes) and 30-day auto-refill non-drop support for organic algorithm boosting (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
         providerId: provider1._id,
         providerServiceId: '4351',
       },
       {
-        name: 'YouTube Likes [Standard - Algorithm Discovery Booster | Fast Active Profiles | Non-Drop Auto-Refill]',
+        name: 'YouTube Likes [Standard - Natural Slow Viral Booster | Active Profiles | Non-Drop Auto-Refill]',
         category: 'YouTube Likes',
         ratePer1000: 1.50,
         minQuantity: 50,
         maxQuantity: 10000,
         status: 'active',
-        speed: 'Speed: 10k/Day (Start: 0-15 Min)',
-        description: 'Active YouTube video likes from real active profiles with 30-day auto-refill registering naturally on analytics for algorithm discovery boosting (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
+        speed: 'Speed: 3k-5k/Hour Steady Drip (Start: 0-15 Min)',
+        description: 'Active YouTube video likes from real profiles with natural steady delivery (~3k-5k/hour, ~10k over 2-3 hrs) registering naturally on analytics with 30-day auto-refill (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
         providerId: provider1._id,
         providerServiceId: '4351',
       },
       {
-        name: 'YouTube Likes [Premium - Algorithm Discovery Booster | 100% Real Non-Drop HQ]',
+        name: 'YouTube Likes [Premium - Natural Drip Algorithm Booster | 100% Real Non-Drop HQ]',
         category: 'YouTube Likes',
         ratePer1000: 1.50,
         minQuantity: 50,
         maxQuantity: 10000,
         status: 'active',
-        speed: 'Speed: 10k/Day (Start: 0-15 Min | 30d Auto-Refill)',
-        description: '100% Real HQ non-drop YouTube likes with natural drip-rate for algorithm rank boosting (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
+        speed: 'Speed: 3k-5k/Hour Natural Pacing (Start: 0-15 Min | 30d Auto-Refill)',
+        description: '100% Real HQ non-drop YouTube likes with steady drip delivery (~3k-5k/hour natural pacing) for safe algorithm rank boosting (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
         providerId: provider1._id,
         providerServiceId: '4351',
       },
@@ -308,13 +308,14 @@ const seedDatabase = async () => {
     const insertedServices = await Service.insertMany(initialServices);
     console.log(`[Seed Success] Inserted ${insertedServices.length} Tiered SMM Services across 5 Core YouTube Categories + Instagram.`);
 
-    console.log('[Seed Critical Check] Hardcoding ALL YouTube Likes services in MongoDB Atlas to FineSMM ID 4351...');
+    console.log('[Seed Critical Check] Hardcoding ALL YouTube Likes services in MongoDB Atlas to FineSMM ID 4351 (Natural Steady Delivery ~3k-5k/hr)...');
     const updateLikesResult = await Service.updateMany(
       { category: 'YouTube Likes' },
       {
         $set: {
           providerServiceId: '4351',
           ratePer1000: 1.50,
+          speed: 'Speed: 3k-5k/Hour Natural Pacing (Start: 0-15 Min)',
         },
       }
     );
@@ -332,7 +333,7 @@ const seedDatabase = async () => {
     console.log(' SEED COMPLETED SUCCESSFULLY!');
     console.log('================================================');
     console.log(' 5 CORE YOUTUBE CATEGORIES & 3 QUALITY TIERS CREATED:');
-    console.log('   1. YouTube Likes:       Wholesale ($1.50 / ~₹126 - ID 4351), Standard ($1.50 / ~₹126 - ID 4351), Premium ($1.50 / ~₹126 - ID 4351)');
+    console.log('   1. YouTube Likes:       Wholesale ($1.50 / ~₹126 - ID 4351), Standard ($1.50 / ~₹126 - ID 4351), Premium ($1.50 / ~₹126 - ID 4351) [3k-5k/hr Natural Pacing]');
     console.log('   2. YouTube Views:       Simple ($1.20), Standard ($1.85), Premium ($2.50)');
     console.log('   3. YouTube Subscribers: Simple ($12.00), Standard ($18.50), Premium ($25.00)');
     console.log('   4. YouTube Comments:    Simple ($8.00), Standard ($14.00), Premium ($20.00)');
