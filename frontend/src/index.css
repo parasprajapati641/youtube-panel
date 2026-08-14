@@ -3,8 +3,17 @@
 @tailwind utilities;
 
 @layer base {
-  body {
-    @apply bg-dark-900 text-gray-100 font-sans min-h-screen overflow-x-hidden;
+  *, ::before, ::after {
+    box-sizing: border-box;
+  }
+  html, body {
+    @apply bg-dark-900 text-gray-100 font-sans min-h-screen overflow-x-hidden w-full max-w-full;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  #root {
+    @apply min-h-screen flex flex-col overflow-x-hidden w-full max-w-full;
   }
 }
 
