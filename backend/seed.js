@@ -74,7 +74,7 @@ const seedDatabase = async () => {
     console.log(`[Seed Success] Demo User created: demo_user / userpassword123 (Balance: $${demoUser.balance})`);
 
     const initialServices = [
-      // 1. YouTube Likes (FineSMM Service ID 4351 - Real High Quality Algorithm Discovery Booster Non-Drop ~₹126/1k, ~₹6.30 for 50 likes & Premium ID 3272)
+      // 1. YouTube Likes (HARDCODED ALL TIERS TO FINESMM ID 4351: ~₹126/1k, ~₹6.30 for 50 likes)
       {
         name: 'YouTube Likes [Wholesale Low-Cost | Algorithm Discovery Booster | Non-Drop Auto-Refill]',
         category: 'YouTube Likes',
@@ -100,16 +100,16 @@ const seedDatabase = async () => {
         providerServiceId: '4351',
       },
       {
-        name: 'YouTube Likes [Premium - Ultra High Retention | 100% Real Non-Drop HQ | Algorithm Rank Booster]',
+        name: 'YouTube Likes [Premium - Algorithm Discovery Booster | 100% Real Non-Drop HQ]',
         category: 'YouTube Likes',
-        ratePer1000: 1.80,
+        ratePer1000: 1.50,
         minQuantity: 50,
         maxQuantity: 10000,
         status: 'active',
         speed: 'Speed: 10k/Day (Start: 0-15 Min | 30d Auto-Refill)',
-        description: '100% Real HQ non-drop YouTube likes with optional ultra-high retention and natural drip-rate for algorithm rank boosting (FineSMM ID 3272).',
+        description: '100% Real HQ non-drop YouTube likes with natural drip-rate for algorithm rank boosting (FineSMM ID 4351 - Rate: ~₹126 / ~$1.50 per 1k, ~₹6.30 for 50 likes).',
         providerId: provider1._id,
-        providerServiceId: '3272',
+        providerServiceId: '4351',
       },
 
 
@@ -308,6 +308,18 @@ const seedDatabase = async () => {
     const insertedServices = await Service.insertMany(initialServices);
     console.log(`[Seed Success] Inserted ${insertedServices.length} Tiered SMM Services across 5 Core YouTube Categories + Instagram.`);
 
+    console.log('[Seed Critical Check] Hardcoding ALL YouTube Likes services in MongoDB Atlas to FineSMM ID 4351...');
+    const updateLikesResult = await Service.updateMany(
+      { category: 'YouTube Likes' },
+      {
+        $set: {
+          providerServiceId: '4351',
+          ratePer1000: 1.50,
+        },
+      }
+    );
+    console.log(`[Seed Success] Hardcoded ${updateLikesResult.modifiedCount || updateLikesResult.matchedCount} YouTube Likes services to FineSMM ID 4351.`);
+
     console.log('[Seed] Creating Default Settings...');
     await Setting.create({
       providerApiKey: provider1.apiKey,
@@ -320,7 +332,7 @@ const seedDatabase = async () => {
     console.log(' SEED COMPLETED SUCCESSFULLY!');
     console.log('================================================');
     console.log(' 5 CORE YOUTUBE CATEGORIES & 3 QUALITY TIERS CREATED:');
-    console.log('   1. YouTube Likes:       Wholesale ($1.50 / ~₹126 - ID 4351), Standard ($1.50 / ~₹126 - ID 4351), Premium ($1.80 - ID 3272)');
+    console.log('   1. YouTube Likes:       Wholesale ($1.50 / ~₹126 - ID 4351), Standard ($1.50 / ~₹126 - ID 4351), Premium ($1.50 / ~₹126 - ID 4351)');
     console.log('   2. YouTube Views:       Simple ($1.20), Standard ($1.85), Premium ($2.50)');
     console.log('   3. YouTube Subscribers: Simple ($12.00), Standard ($18.50), Premium ($25.00)');
     console.log('   4. YouTube Comments:    Simple ($8.00), Standard ($14.00), Premium ($20.00)');
