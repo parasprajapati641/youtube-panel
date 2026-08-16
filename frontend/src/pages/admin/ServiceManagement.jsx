@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { Layers, Plus, Edit2, Trash2, CheckCircle, XCircle, Search, Save, X } from 'lucide-react';
+import { Layers, Plus, Edit2, Trash2, CheckCircle, XCircle, Search, Save, X, RefreshCw, Sparkles } from 'lucide-react';
 
 const ServiceManagement = () => {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState(null);
@@ -46,6 +47,19 @@ const ServiceManagement = () => {
   useEffect(() => {
     fetchServices();
   }, []);
+
+  const handleSyncSmmShiba = async () => {
+    setSyncing(true);
+    try {
+      const res = await api.post('/admin/services/sync-smmshiba');
+      toast.success(res.data.message || 'SMMShiba Services synchronized successfully!');
+      fetchServices();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to sync SMMShiba services');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleOpenAddModal = () => {
     setEditingService(null);
@@ -113,7 +127,8 @@ const ServiceManagement = () => {
   const filteredServices = services.filter(
     (s) =>
       s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.category.toLowerCase().includes(search.toLowerCase())
+      s.category.toLowerCase().includes(search.toLowerCase()) ||
+      (s.providerServiceId && String(s.providerServiceId).includes(search))
   );
 
   return (
@@ -123,31 +138,40 @@ const ServiceManagement = () => {
         <div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
             <Layers className="w-6 h-6 text-yt-red" />
-            Service Package Management (CRUD)
+            SMM Service Package Catalog ({services.length})
           </h1>
           <p className="text-xs text-gray-400 mt-1">
-            Add, update, or remove YouTube & Social Media growth packages and rates.
+            Manage growth packages, view original provider rates vs selling price, or sync live catalog from SMMShiba.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleSyncSmmShiba}
+            disabled={syncing}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan text-white text-xs font-bold shadow-glow-cyan flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            <span>Sync SMMShiba Services</span>
+          </button>
+
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-3 text-gray-500" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search service..."
-              className="pl-9 pr-4 py-2 rounded-xl glass-input text-xs font-medium w-48"
+              placeholder="Search ID, name..."
+              className="pl-9 pr-4 py-2 rounded-xl glass-input text-xs font-medium w-40"
             />
           </div>
 
           <button
             onClick={handleOpenAddModal}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-yt-red to-yt-darkRed hover:from-yt-lightRed hover:to-yt-red text-white text-xs font-bold shadow-glow transition-all flex items-center gap-1.5"
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-yt-red to-yt-darkRed hover:from-yt-lightRed hover:to-yt-red text-white text-xs font-bold shadow-glow transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Service</span>
+            <span>Add Custom</span>
           </button>
         </div>
       </div>
@@ -164,10 +188,13 @@ const ServiceManagement = () => {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-800 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <th className="pb-3 px-3">SMMShiba ID</th>
                   <th className="pb-3 px-3">Service Name</th>
                   <th className="pb-3 px-3">Category</th>
-                  <th className="pb-3 px-3">Rate / 1000</th>
+                  <th className="pb-3 px-3">Provider Rate</th>
+                  <th className="pb-3 px-3">Selling Price</th>
                   <th className="pb-3 px-3">Min / Max</th>
+                  <th className="pb-3 px-3">Refill</th>
                   <th className="pb-3 px-3">Status</th>
                   <th className="pb-3 px-3 text-right">Actions</th>
                 </tr>
@@ -175,6 +202,9 @@ const ServiceManagement = () => {
               <tbody className="divide-y divide-gray-800/60">
                 {filteredServices.map((srv) => (
                   <tr key={srv._id} className="hover:bg-dark-700/30 transition-colors">
+                    <td className="py-4 px-3 font-mono text-xs font-bold text-accent-cyan">
+                      #{srv.providerServiceId || 'MANUAL'}
+                    </td>
                     <td className="py-4 px-3 font-medium text-white max-w-sm">
                       <div className="font-semibold text-white">{srv.name}</div>
                       <div className="text-xs text-gray-400 truncate max-w-xs">{srv.description}</div>
@@ -184,11 +214,21 @@ const ServiceManagement = () => {
                         {srv.category}
                       </span>
                     </td>
+                    <td className="py-4 px-3 font-mono text-xs text-gray-400">
+                      ${(srv.originalRate || 0).toFixed(4)}
+                    </td>
                     <td className="py-4 px-3 font-bold text-accent-emerald">
-                      ${srv.ratePer1000.toFixed(2)}
+                      ${srv.ratePer1000.toFixed(4)}
                     </td>
                     <td className="py-4 px-3 text-xs text-gray-300 font-semibold">
-                      {srv.minQuantity} / {srv.maxQuantity.toLocaleString()}
+                      {srv.minQuantity} / {srv.maxQuantity?.toLocaleString()}
+                    </td>
+                    <td className="py-4 px-3 text-xs font-semibold">
+                      {srv.refill ? (
+                        <span className="text-accent-emerald bg-accent-emerald/10 px-2 py-0.5 rounded border border-accent-emerald/20">Refill On</span>
+                      ) : (
+                        <span className="text-gray-500">No</span>
+                      )}
                     </td>
                     <td className="py-4 px-3">
                       <span

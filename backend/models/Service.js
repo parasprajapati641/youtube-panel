@@ -13,8 +13,25 @@ const serviceSchema = new mongoose.Schema({
   },
   ratePer1000: {
     type: Number,
-    required: [true, 'Rate per 1000 is required'],
+    required: [true, 'Selling rate per 1000 is required'],
     min: 0,
+  },
+  originalRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  marginPercent: {
+    type: Number,
+    default: null,
+  },
+  refill: {
+    type: Boolean,
+    default: false,
+  },
+  type: {
+    type: String,
+    default: 'Default',
   },
   minQuantity: {
     type: Number,

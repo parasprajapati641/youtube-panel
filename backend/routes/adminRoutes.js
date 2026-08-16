@@ -13,6 +13,9 @@ const {
   forceSyncOrders,
   getSettings,
   updateSettings,
+  syncSmmShibaCatalog,
+  refillOrder,
+  getSmmShibaBalance,
 } = require('../controllers/adminController');
 const {
   getProviders,
@@ -36,6 +39,7 @@ router.put('/users/:id', updateUser);
 // Service Management
 router.get('/services', getAdminServices);
 router.post('/services', createService);
+router.post('/services/sync-smmshiba', syncSmmShibaCatalog);
 router.put('/services/:id', updateService);
 router.delete('/services/:id', deleteService);
 
@@ -43,6 +47,7 @@ router.delete('/services/:id', deleteService);
 router.get('/orders', getAllOrders);
 router.put('/orders/:id/status', updateOrderStatus);
 router.post('/orders/sync', forceSyncOrders);
+router.post('/orders/:id/refill', refillOrder);
 
 // Provider Management
 router.get('/providers', getProviders);
@@ -50,6 +55,7 @@ router.post('/providers', createProvider);
 router.put('/providers/:id', updateProvider);
 router.delete('/providers/:id', deleteProvider);
 router.post('/providers/:id/balance', checkBalance);
+router.get('/smmshiba/balance', getSmmShibaBalance);
 
 // Settings
 router.get('/settings', getSettings);

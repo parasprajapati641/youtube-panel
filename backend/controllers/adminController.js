@@ -244,15 +244,17 @@ const updateOrderStatus = async (req, res) => {
 };
 
 // @route   GET /api/admin/settings
-// @desc    Get API Provider settings
+// @desc    Get API Provider settings and profit margin configurations
 const getSettings = async (req, res) => {
   try {
     let settings = await Setting.findOne();
     if (!settings) {
       settings = await Setting.create({
-        providerApiKey: '',
-        providerApiUrl: 'https://api.smmprovider.com/v2',
+        providerApiKey: '8678863199f629b7d2564662ec9d8f03',
+        providerApiUrl: 'https://smmshiba.com/api/v2',
         siteName: 'YouTube & Social SMM Panel',
+        defaultProfitMargin: 20,
+        categoryMargins: {},
       });
     }
     return res.json(settings);
@@ -263,10 +265,10 @@ const getSettings = async (req, res) => {
 };
 
 // @route   PUT /api/admin/settings
-// @desc    Update API Provider settings
+// @desc    Update API Provider settings and profit margin rules
 const updateSettings = async (req, res) => {
   try {
-    const { providerApiKey, providerApiUrl, siteName } = req.body;
+    const { providerApiKey, providerApiUrl, siteName, defaultProfitMargin, categoryMargins } = req.body;
 
     let settings = await Setting.findOne();
     if (!settings) {
@@ -276,6 +278,8 @@ const updateSettings = async (req, res) => {
     if (providerApiKey !== undefined) settings.providerApiKey = providerApiKey;
     if (providerApiUrl !== undefined) settings.providerApiUrl = providerApiUrl;
     if (siteName !== undefined) settings.siteName = siteName;
+    if (defaultProfitMargin !== undefined) settings.defaultProfitMargin = Math.max(0, Number(defaultProfitMargin));
+    if (categoryMargins !== undefined) settings.categoryMargins = categoryMargins;
     settings.updatedAt = Date.now();
 
     await settings.save();
@@ -299,6 +303,92 @@ const forceSyncOrders = async (req, res) => {
   }
 };
 
+// @route   POST /api/admin/services/sync-smmshiba
+// @desc    Sync catalog from SMMShiba API and update rates with dynamic profit margin formula
+const syncSmmShibaCatalog = async (req, res) => {
+  try {
+    const { syncSmmShibaServices } = require('../services/syncService');
+    const result = await syncSmmShibaServices();
+
+    if (result.success) {
+      return res.json({
+        message: `Successfully synchronized SMMShiba catalog! (${result.totalFetched} services processed, ${result.addedCount} new added, ${result.updatedCount} updated)`,
+        result,
+      });
+    } else {
+      return res.status(500).json({
+        message: result.error || 'Failed to sync SMMShiba services',
+      });
+    }
+  } catch (error) {
+    console.error('[Sync SMMShiba Controller Error]', error);
+    return res.status(500).json({ message: 'Error triggering SMMShiba catalog sync' });
+  }
+};
+
+// @route   POST /api/admin/orders/:id/refill
+// @desc    Trigger provider order refill action for an existing order
+const refillOrder = async (req, res) => {
+  try {
+    const SmmProviderService = require('../services/smmProviderService');
+    const order = await Order.findById(req.params.id).populate({
+      path: 'serviceId',
+      populate: { path: 'providerId' },
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.providerOrderId) {
+      return res.status(400).json({ message: 'Order has no external provider order ID to refill' });
+    }
+
+    const provider = order.serviceId?.providerId;
+    const refillResult = await SmmProviderService.requestRefill(provider, order.providerOrderId);
+
+    if (refillResult.success) {
+      return res.json({
+        message: `Refill request submitted successfully! (Refill ID: ${refillResult.refillId})`,
+        refillResult,
+      });
+    } else {
+      return res.status(400).json({
+        message: refillResult.error || 'Provider rejected refill request',
+        refillResult,
+      });
+    }
+  } catch (error) {
+    console.error('[Admin Order Refill Error]', error);
+    return res.status(500).json({ message: 'Failed to request order refill' });
+  }
+};
+
+// @route   GET /api/admin/smmshiba/balance
+// @desc    Get live SMMShiba provider balance
+const getSmmShibaBalance = async (req, res) => {
+  try {
+    const { getOrUpdateSmmShibaProvider } = require('../services/syncService');
+    const SmmProviderService = require('../services/smmProviderService');
+
+    const provider = await getOrUpdateSmmShibaProvider();
+    const result = await SmmProviderService.getProviderBalance(provider);
+
+    const balance = result.balance !== undefined ? Number(result.balance) : provider.balance;
+    provider.balance = balance;
+    await provider.save();
+
+    return res.json({
+      balance,
+      currency: result.currency || 'USD',
+      providerName: provider.name,
+    });
+  } catch (error) {
+    console.error('[Get SMMShiba Balance Error]', error);
+    return res.status(500).json({ message: 'Error fetching SMMShiba provider balance', balance: 0 });
+  }
+};
+
 module.exports = {
   getAdminStats,
   getAllUsers,
@@ -312,4 +402,7 @@ module.exports = {
   forceSyncOrders,
   getSettings,
   updateSettings,
+  syncSmmShibaCatalog,
+  refillOrder,
+  getSmmShibaBalance,
 };

@@ -78,6 +78,15 @@ const OrderManagement = () => {
     }
   };
 
+  const handleRefill = async (orderId) => {
+    try {
+      const res = await api.post(`/admin/orders/${orderId}/refill`);
+      toast.success(res.data.message || 'Refill request submitted successfully!');
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Refill request failed');
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -88,7 +97,7 @@ const OrderManagement = () => {
             Global Order Monitoring & Live API Sync
           </h1>
           <p className="text-xs text-gray-400 mt-1">
-            Monitor platform-wide orders, inspect Provider Order IDs, and force live API status sync.
+            Monitor platform-wide orders, inspect Provider Order IDs, dispatch refills, and force live API status sync.
           </p>
         </div>
 
@@ -96,7 +105,7 @@ const OrderManagement = () => {
           <button
             onClick={handleForceSync}
             disabled={syncing}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan text-white text-xs font-bold shadow-glow-cyan flex items-center gap-1.5 transition-all"
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan text-white text-xs font-bold shadow-glow-cyan flex items-center gap-1.5 transition-all cursor-pointer"
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
             <span>Force Live Status Sync</span>
@@ -152,6 +161,7 @@ const OrderManagement = () => {
                   <th className="pb-3 px-3">Remains</th>
                   <th className="pb-3 px-3">Cost</th>
                   <th className="pb-3 px-3">Status Override</th>
+                  <th className="pb-3 px-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/60">
@@ -201,6 +211,20 @@ const OrderManagement = () => {
                         <option value="Completed" className="bg-dark-800 text-accent-emerald">Completed</option>
                         <option value="Canceled" className="bg-dark-800 text-red-400">Canceled (Refund)</option>
                       </select>
+                    </td>
+                    <td className="py-4 px-3 text-right">
+                      {ord.providerOrderId ? (
+                        <button
+                          onClick={() => handleRefill(ord._id)}
+                          className="px-2.5 py-1 rounded-lg bg-accent-purple/15 text-accent-purple hover:bg-accent-purple/25 border border-accent-purple/30 text-xs font-bold transition-all flex items-center gap-1 ml-auto cursor-pointer"
+                          title="Trigger Provider Refill"
+                        >
+                          <Zap className="w-3.5 h-3.5" />
+                          <span>Refill</span>
+                        </button>
+                      ) : (
+                        <span className="text-gray-600 text-xs">-</span>
+                      )}
                     </td>
                   </tr>
                 ))}

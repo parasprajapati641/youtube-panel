@@ -52,13 +52,16 @@ const postForm = (endpointUrl, params) => {
   });
 };
 
+const DEFAULT_API_URL = 'https://smmshiba.com/api/v2';
+const DEFAULT_API_KEY = '8678863199f629b7d2564662ec9d8f03';
+
 class SmmProviderService {
   /**
    * Submit new order to external SMM Provider API via application/x-www-form-urlencoded
    */
   static async addOrder(provider, providerServiceId, link, quantity, comments) {
-    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || 'https://finesmmpanel.com/api/v2';
-    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || 'ba984cfb277e7e9158a93473b6f26bfb';
+    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || DEFAULT_API_URL;
+    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || DEFAULT_API_KEY;
 
     console.log(`[SMM Provider API Dispatch] Target URL: ${apiUrl}`);
     console.log(`[SMM Provider Form Params]: key=${apiKey.slice(0, 6)}... action=add service=${providerServiceId} link=${link} quantity=${quantity}${comments ? ' comments=' + comments.slice(0, 20) + '...' : ''}`);
@@ -119,8 +122,8 @@ class SmmProviderService {
    * Query status for a list of provider order IDs
    */
   static async getOrderStatus(provider, providerOrderIds) {
-    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || 'https://finesmmpanel.com/api/v2';
-    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || 'ba984cfb277e7e9158a93473b6f26bfb';
+    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || DEFAULT_API_URL;
+    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || DEFAULT_API_KEY;
 
     if (!providerOrderIds || providerOrderIds.length === 0) {
       return {};
@@ -149,8 +152,8 @@ class SmmProviderService {
    * Query current provider balance
    */
   static async getProviderBalance(provider) {
-    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || 'https://finesmmpanel.com/api/v2';
-    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || 'ba984cfb277e7e9158a93473b6f26bfb';
+    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || DEFAULT_API_URL;
+    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || DEFAULT_API_KEY;
 
     try {
       const response = await postForm(apiUrl, {
@@ -162,6 +165,75 @@ class SmmProviderService {
     } catch (error) {
       console.error(`[SMM Provider Balance Error]: ${error.message}`);
       return { balance: 0, currency: 'USD', error: error.message };
+    }
+  }
+
+  /**
+   * Fetch complete service catalog from provider (action: 'services')
+   */
+  static async fetchServices(provider) {
+    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || DEFAULT_API_URL;
+    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || DEFAULT_API_KEY;
+
+    try {
+      console.log(`[SMM Provider Fetch Services] Requesting catalog from: ${apiUrl}`);
+      const response = await postForm(apiUrl, {
+        key: apiKey,
+        action: 'services',
+      });
+
+      if (Array.isArray(response)) {
+        return { success: true, services: response };
+      } else if (response && response.error) {
+        return { success: false, error: response.error, services: [] };
+      } else {
+        return { success: false, error: 'Invalid catalog response from SMM provider', services: [] };
+      }
+    } catch (error) {
+      console.error(`[SMM Provider Fetch Services Error]: ${error.message}`);
+      return { success: false, error: error.message, services: [] };
+    }
+  }
+
+  /**
+   * Request order refill from provider (action: 'refill')
+   */
+  static async requestRefill(provider, providerOrderId) {
+    const apiUrl = provider?.apiUrl || process.env.SMM_PROVIDER_URL || DEFAULT_API_URL;
+    const apiKey = provider?.apiKey || process.env.SMM_PROVIDER_API_KEY || DEFAULT_API_KEY;
+
+    try {
+      console.log(`[SMM Provider Refill] Dispatching refill for provider order ID: ${providerOrderId}`);
+      const response = await postForm(apiUrl, {
+        key: apiKey,
+        action: 'refill',
+        order: String(providerOrderId),
+      });
+
+      console.log('[SMM Provider Refill Response]:', JSON.stringify(response));
+
+      if (response && (response.refill || response.order)) {
+        return {
+          success: true,
+          refillId: response.refill || response.order,
+          rawResponse: response,
+        };
+      } else if (response && response.error) {
+        return {
+          success: false,
+          error: response.error,
+          rawResponse: response,
+        };
+      } else {
+        return {
+          success: false,
+          error: response?.raw || 'Unexpected refill response from provider',
+          rawResponse: response,
+        };
+      }
+    } catch (error) {
+      console.error(`[SMM Provider Refill Error]: ${error.message}`);
+      return { success: false, error: error.message };
     }
   }
 }

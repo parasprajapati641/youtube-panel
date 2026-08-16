@@ -1,11 +1,31 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Youtube, Wallet, LogOut, ShieldAlert, Sparkles, PlusCircle, Menu, X } from 'lucide-react';
+import { Youtube, Wallet, LogOut, ShieldAlert, Sparkles, PlusCircle, Menu, X, RefreshCw } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+import api from '../services/api';
 
 const Navbar = ({ mobileMenuOpen, setMobileMenuOpen }) => {
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const [smmShibaBalance, setSmmShibaBalance] = useState(null);
+
+  useEffect(() => {
+    if (user && isAdmin) {
+      const fetchBalance = async () => {
+        try {
+          const res = await api.get('/admin/smmshiba/balance');
+          if (res.data && res.data.balance !== undefined) {
+            setSmmShibaBalance(res.data.balance);
+          }
+        } catch (err) {
+          console.error('Failed to fetch SMMShiba balance', err);
+        }
+      };
+      fetchBalance();
+      const interval = setInterval(fetchBalance, 60000);
+      return () => clearInterval(interval);
+    }
+  }, [user, isAdmin]);
 
   return (
     <header className="sticky top-0 z-40 w-full max-w-full overflow-x-hidden glass-card border-b border-gray-800/80 bg-dark-800/90 backdrop-blur-md">
@@ -42,6 +62,15 @@ const Navbar = ({ mobileMenuOpen, setMobileMenuOpen }) => {
         {user && (
           <div className="flex items-center gap-1 sm:gap-3 shrink-0 ml-auto">
             
+            {/* Live SMMShiba API Balance for Admin */}
+            {isAdmin && smmShibaBalance !== null && (
+              <div className="hidden sm:flex items-center gap-1.5 bg-dark-900/90 px-2.5 py-1 rounded-xl border border-accent-cyan/30 text-[11px] font-semibold text-accent-cyan shadow-glow-cyan">
+                <span className="w-2 h-2 rounded-full bg-accent-cyan animate-pulse"></span>
+                <span className="text-gray-400 text-xs hidden lg:inline">SMMShiba API:</span>
+                <span className="font-bold font-mono">${smmShibaBalance.toFixed(2)}</span>
+              </div>
+            )}
+
             {/* Unlimited Test Account Badge */}
             {user.isUnlimited ? (
               <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-r from-accent-purple/20 to-accent-cyan/20 border border-accent-purple/40 text-accent-cyan text-[11px] sm:text-xs font-semibold shadow-glow-cyan animate-pulse">
