@@ -1,0 +1,12 @@
+# Free / paid proxies – one per line
+# Formats supported:
+#   IP:PORT
+#   http://IP:PORT
+#   user:pass@IP:PORT
+#   http://user:pass@IP:PORT
+
+# Sacha ports sathe aam lakhvu pade (Example ports - tamara provider na aapi ne nakho):
+# 186.1.182.194:4153
+# 45.74.31.46:12830
+# 45.74.31.40:8748
+

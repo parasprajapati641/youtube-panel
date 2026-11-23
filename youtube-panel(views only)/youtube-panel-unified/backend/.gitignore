@@ -1,0 +1,7 @@
+node_modules/
+profiles/
+.profiles/
+bot/.profiles/
+.env
+*.log
+.vercel

@@ -1,0 +1,13 @@
+{
+  "watch": ["."],
+  "ext": "js,json,env",
+  "ignore": [
+    "profiles/**",
+    "**/profiles/**",
+    ".profiles/**",
+    "node_modules/**",
+    "*.log",
+    "bot/.profiles/**"
+  ],
+  "delay": 1000
+}
