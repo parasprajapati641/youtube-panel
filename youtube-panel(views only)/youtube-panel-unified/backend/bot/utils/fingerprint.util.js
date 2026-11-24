@@ -1,6 +1,7 @@
 /**
- * Per-bot browser fingerprint spoofing for Playwright.
- * Same botName → stable fingerprint; different bots → different FP.
+ * Per-bot / per-view-profile browser fingerprint spoofing for Playwright.
+ * Same botName/profileName → stable fingerprint + same browser brand forever.
+ * Different profiles → different FP + different browser brand.
  *
  * Level 1 coverage:
  *  - navigator (webdriver, platform, languages, hardware, plugins)
@@ -11,6 +12,11 @@
  *  - ClientRects slight noise
  *  - Client Hints helpers (UA-CH data for headers)
  *  - Battery / connection soft stubs
+ *  - Multi-browser brand spoofing (Chrome, Safari, Edge, Firefox, Brave, Opera, …)
+ *
+ * CHANGE (2026-11): Added BROWSER_BRANDS list + stable per-profile brand assignment.
+ * Real Playwright engines remain chromium / firefox / webkit; other brands are
+ * spoofed via UA + Client Hints + navigator while using the closest engine.
  */
 
 'use strict';
@@ -36,6 +42,255 @@ function pick(seed, arr) {
 function intFrom(seed, offset, min, max) {
   const n = seed[offset % seed.length];
   return min + (n % (max - min + 1));
+}
+
+// ---------------------------------------------------------------------------
+// CHANGE: Full browser brand list (user request). Each view profile gets one
+// stable brand. Playwright can only run chromium / firefox / webkit engines;
+// the rest are spoofed (UA + CH + navigator) on the closest engine.
+// ---------------------------------------------------------------------------
+const BROWSER_BRANDS = [
+  'Google Chrome',
+  'Apple Safari',
+  'Microsoft Edge',
+  'Mozilla Firefox',
+  'Brave',
+  'Opera',
+  'Opera GX',
+  'Opera Mini',
+  'Vivaldi',
+  'Tor Browser',
+  'DuckDuckGo',
+  'LibreWolf',
+  'Zen Browser',
+  'Arc',
+  'Dia',
+  'Comet',
+  'Samsung Internet',
+  'UC Browser',
+  'Chromium',
+  'Waterfox',
+  'Pale Moon',
+  'Mullvad Browser',
+  'Ecosia',
+  'Aloha Browser',
+  'Kiwi Browser',
+  'Yandex Browser',
+  'Maxthon',
+  'Floorp',
+  'Thorium',
+  'Ungoogled Chromium',
+];
+
+/**
+ * Map brand → real Playwright engine + optional channel + UA template pieces.
+ * engine: 'chromium' | 'firefox' | 'webkit'
+ * channel: Playwright chromium channel when available (chrome, msedge, …)
+ */
+const BRAND_META = {
+  'Google Chrome': {
+    engine: 'chromium',
+    channel: 'chrome',
+    chBrand: 'Google Chrome',
+    uaHint: 'Chrome',
+  },
+  'Apple Safari': {
+    engine: 'webkit',
+    channel: null,
+    chBrand: 'Safari',
+    uaHint: 'Safari',
+  },
+  'Microsoft Edge': {
+    engine: 'chromium',
+    channel: 'msedge',
+    chBrand: 'Microsoft Edge',
+    uaHint: 'Edg',
+  },
+  'Mozilla Firefox': {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  Brave: {
+    engine: 'chromium',
+    channel: null, // system Brave path preferred when available
+    chBrand: 'Brave',
+    uaHint: 'Chrome', // Brave is Chromium-based; UA often still has Chrome token
+  },
+  Opera: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Opera',
+    uaHint: 'OPR',
+  },
+  'Opera GX': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Opera',
+    uaHint: 'OPR',
+  },
+  'Opera Mini': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Opera',
+    uaHint: 'OPR',
+  },
+  Vivaldi: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Vivaldi',
+    uaHint: 'Vivaldi',
+  },
+  'Tor Browser': {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  DuckDuckGo: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'DuckDuckGo',
+    uaHint: 'Chrome',
+  },
+  LibreWolf: {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  'Zen Browser': {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  Arc: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Arc',
+    uaHint: 'Chrome',
+  },
+  Dia: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  Comet: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  'Samsung Internet': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Samsung Internet',
+    uaHint: 'SamsungBrowser',
+  },
+  'UC Browser': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'UC Browser',
+    uaHint: 'UCBrowser',
+  },
+  Chromium: {
+    engine: 'chromium',
+    channel: 'chromium',
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  Waterfox: {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  'Pale Moon': {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  'Mullvad Browser': {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  Ecosia: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  'Aloha Browser': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  'Kiwi Browser': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  'Yandex Browser': {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Yandex',
+    uaHint: 'YaBrowser',
+  },
+  Maxthon: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  Floorp: {
+    engine: 'firefox',
+    channel: null,
+    chBrand: 'Firefox',
+    uaHint: 'Firefox',
+  },
+  Thorium: {
+    engine: 'chromium',
+    channel: null,
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+  'Ungoogled Chromium': {
+    engine: 'chromium',
+    channel: 'chromium',
+    chBrand: 'Chromium',
+    uaHint: 'Chrome',
+  },
+};
+
+/** Stable pick: same profileName always gets the same brand index. */
+function pickStableBrowserBrand(profileName) {
+  const seed = hashSeed(profileName || 'bot');
+  // Use a few bytes so distribution is better than seed[0] alone
+  const idx = (seed[0] + seed[1] * 31 + seed[2] * 17) % BROWSER_BRANDS.length;
+  return BROWSER_BRANDS[idx];
+}
+
+function getBrandMeta(brand) {
+  return (
+    BRAND_META[brand] || {
+      engine: 'chromium',
+      channel: 'chrome',
+      chBrand: 'Google Chrome',
+      uaHint: 'Chrome',
+    }
+  );
+}
+
+function getEngineForBrand(brand) {
+  return getBrandMeta(brand).engine;
 }
 
 // Fallback lists if user-agents package is missing
@@ -79,6 +334,77 @@ const WEBGL = [
 ];
 
 /**
+ * Build a brand-specific desktop User-Agent string (stable via seed).
+ * CHANGE: brand-aware UAs so each profile looks like a different browser.
+ */
+function buildBrandUserAgent(brand, seed, platKey) {
+  const meta = getBrandMeta(brand);
+  const chromeMajors = [128, 129, 130, 131, 132];
+  const ffMajors = [128, 129, 130, 131, 132, 133];
+  const safariMajors = [17, 17, 18, 18];
+  const major =
+    meta.engine === 'firefox'
+      ? ffMajors[seed[3] % ffMajors.length]
+      : meta.engine === 'webkit'
+        ? safariMajors[seed[3] % safariMajors.length]
+        : chromeMajors[seed[3] % chromeMajors.length];
+
+  const winNT = 'Windows NT 10.0; Win64; x64';
+  const macOS = 'Macintosh; Intel Mac OS X 10_15_7';
+  const linux = 'X11; Linux x86_64';
+  const osPart = platKey === 'mac' ? macOS : platKey === 'linux' ? linux : winNT;
+
+  // Firefox-family
+  if (meta.engine === 'firefox') {
+    const rv = `${major}.0`;
+    if (brand === 'Tor Browser') {
+      return `Mozilla/5.0 (${osPart}; rv:${rv}) Gecko/20100101 Firefox/${rv}`;
+    }
+    if (brand === 'LibreWolf' || brand === 'Floorp' || brand === 'Waterfox' || brand === 'Pale Moon' || brand === 'Mullvad Browser' || brand === 'Zen Browser') {
+      return `Mozilla/5.0 (${osPart}; rv:${rv}) Gecko/20100101 Firefox/${rv}`;
+    }
+    return `Mozilla/5.0 (${osPart}; rv:${rv}) Gecko/20100101 Firefox/${rv}`;
+  }
+
+  // Safari / WebKit
+  if (meta.engine === 'webkit') {
+    const v = major === 18 ? '18.0' : '17.6';
+    return `Mozilla/5.0 (${macOS}) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${v} Safari/605.1.15`;
+  }
+
+  // Chromium-family – brand-specific tokens
+  const chromeBase = `Mozilla/5.0 (${osPart}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+
+  if (brand === 'Microsoft Edge') {
+    return `${chromeBase} Edg/${major}.0.0.0`;
+  }
+  if (brand === 'Opera' || brand === 'Opera GX' || brand === 'Opera Mini') {
+    return `${chromeBase} OPR/${major}.0.0.0`;
+  }
+  if (brand === 'Vivaldi') {
+    return `${chromeBase} Vivaldi/${major}.0.0.0`;
+  }
+  if (brand === 'Yandex Browser') {
+    return `${chromeBase} YaBrowser/${major}.0.0.0`;
+  }
+  if (brand === 'Samsung Internet') {
+    return `Mozilla/5.0 (${osPart}) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/${Math.max(20, major - 100)}.0 Chrome/${major}.0.0.0 Safari/537.36`;
+  }
+  if (brand === 'UC Browser') {
+    return `Mozilla/5.0 (${osPart}) AppleWebKit/537.36 (KHTML, like Gecko) UBrowser/${major}.0.0.0 Chrome/${major}.0.0.0 Safari/537.36`;
+  }
+  if (brand === 'Brave') {
+    // Brave often presents as Chrome in UA; CH brand differs
+    return chromeBase;
+  }
+  if (brand === 'Arc') {
+    return chromeBase;
+  }
+  // Chrome, Chromium, Thorium, Ungoogled, Ecosia, etc.
+  return chromeBase;
+}
+
+/**
  * Get a realistic desktop User-Agent + matching viewport from `user-agents` package.
  * Falls back to hard-coded lists if package is unavailable.
  * Uses bot seed so the same bot gets a consistent-ish choice across runs.
@@ -86,7 +412,6 @@ const WEBGL = [
 function getDynamicDesktopUA(seed) {
   if (UserAgent) {
     try {
-      // Generate a few candidates and pick by seed for relative stability
       const candidates = [];
       for (let i = 0; i < 8; i++) {
         const uaInst = new UserAgent({ deviceCategory: 'desktop' });
@@ -110,7 +435,6 @@ function getDynamicDesktopUA(seed) {
     }
   }
 
-  // Fallback
   const ua = pick(seed, FALLBACK_USER_AGENTS);
   const vp = pick(seed.slice(1), FALLBACK_VIEWPORTS);
   return {
@@ -124,62 +448,87 @@ function getDynamicDesktopUA(seed) {
 }
 
 /**
- * Build fingerprint profile for a bot.
- * @param {string} botName
- * @param {{ lowMem?: boolean }} opts
+ * Build fingerprint profile for a bot / view profile.
+ * @param {string} botName - profile or bot name (seed source)
+ * @param {{ lowMem?: boolean, browserBrand?: string }} opts
+ *   - browserBrand: if provided, use it; otherwise pick stable brand from name
+ * CHANGE: opts.browserBrand + brand-aware UA / engine / CH
  */
 function buildFingerprint(botName, opts = {}) {
   const seed = hashSeed(botName || 'bot');
 
-  // Dynamic UA + matching viewport from user-agents (desktop only)
+  // CHANGE: stable browser brand per profile (or forced via opts)
+  const browserBrand =
+    opts.browserBrand && BROWSER_BRANDS.includes(opts.browserBrand)
+      ? opts.browserBrand
+      : pickStableBrowserBrand(botName || 'bot');
+  const brandMeta = getBrandMeta(browserBrand);
+  const engine = brandMeta.engine;
+
+  // Viewport: prefer dynamic desktop sizes, low-mem override
   const dyn = getDynamicDesktopUA(seed);
-  let ua = dyn.userAgent;
   let viewport = {
     width: Math.max(800, Math.min(1920, dyn.viewportWidth || 1366)),
     height: Math.max(600, Math.min(1080, dyn.viewportHeight || 768)),
   };
 
-  // Sanity: some data sets return square viewports – clamp to realistic desktop ratios
   if (viewport.height > viewport.width * 0.9) {
-    viewport.height = Math.round(viewport.width * (0.56 + (seed[1] % 20) / 100)); // ~16:9-ish
+    viewport.height = Math.round(viewport.width * (0.56 + (seed[1] % 20) / 100));
   }
 
   if (opts.lowMem || process.env.LOW_MEMORY === 'true') {
     viewport = { width: 1024, height: 576 };
   }
 
+  // Safari-like prefers Mac platform
+  let platKey = 'win';
+  if (engine === 'webkit') {
+    platKey = 'mac';
+  } else {
+    const isMac = /Macintosh|Mac OS X/.test(dyn.userAgent || '') || dyn.platform === 'MacIntel';
+    const isLinux = (/Linux/.test(dyn.userAgent || '') || dyn.platform === 'Linux x86_64') && !isMac;
+    platKey = isMac ? 'mac' : isLinux ? 'linux' : 'win';
+    // Mix platforms by seed for chromium/firefox (except forced Safari)
+    const forced = ['win', 'mac', 'linux', 'win', 'win'][seed[13] % 5];
+    if (engine !== 'webkit') platKey = forced;
+  }
+
+  const plat = PLATFORMS[platKey];
   const loc = pick(seed.slice(2), LOCALES);
-  const isMac = /Macintosh|Mac OS X/.test(ua) || dyn.platform === 'MacIntel';
-  const isLinux = (/Linux/.test(ua) || dyn.platform === 'Linux x86_64') && !isMac;
-  const plat = isMac ? PLATFORMS.mac : isLinux ? PLATFORMS.linux : PLATFORMS.win;
   const webgl = pick(seed.slice(3), WEBGL);
   const hardwareConcurrency = [4, 6, 8, 12][seed[4] % 4];
   const deviceMemory = [4, 8, 8, 16][seed[5] % 4];
   const colorDepth = 24;
   const maxTouchPoints = 0;
+  const deviceScaleFactor = platKey === 'mac' ? [1, 2, 2, 1.5][seed[12] % 4] : [1, 1, 1, 1.25, 1.5][seed[12] % 5];
 
-  // deviceScaleFactor (Retina-ish or standard). Desktop usually 1 or 1.25/1.5
-  const deviceScaleFactor = [1, 1, 1, 1.25, 1.5][seed[12] % 5];
-
-  // Stable noise seeds (0–255 / float) – same bot = same noise every run
   const canvasNoise = seed[7] % 256;
   const audioNoise = (seed[8] / 255) * 0.00012;
-  const rectNoise = (seed[9] % 3); // 0, 1, or 2 px drift on rects
+  const rectNoise = seed[9] % 3;
 
-  // Chrome major from UA for Client Hints
+  // CHANGE: brand-specific UA instead of generic dynamic only
+  const ua = buildBrandUserAgent(browserBrand, seed, platKey);
+
   const chromeMajorMatch = ua.match(/Chrome\/(\d+)/);
   const chromeMajor = chromeMajorMatch ? chromeMajorMatch[1] : '131';
+  const ffMajorMatch = ua.match(/Firefox\/(\d+)/);
+  const firefoxMajor = ffMajorMatch ? ffMajorMatch[1] : null;
 
-  // Screen slightly larger than viewport (taskbar / chrome UI)
   const screenWidth = dyn.screenWidth || viewport.width;
-  const screenHeight = (dyn.screenHeight && dyn.screenHeight > viewport.height)
-    ? dyn.screenHeight
-    : viewport.height + intFrom(seed, 10, 40, 80);
+  const screenHeight =
+    dyn.screenHeight && dyn.screenHeight > viewport.height
+      ? dyn.screenHeight
+      : viewport.height + intFrom(seed, 10, 40, 80);
   const outerWidth = viewport.width;
   const outerHeight = viewport.height + intFrom(seed, 11, 60, 100);
 
   return {
     botName: botName || 'bot',
+    // CHANGE: persist brand + engine so next launch reuses same browser identity
+    browserBrand,
+    engine,
+    channel: brandMeta.channel || null,
+    chBrand: brandMeta.chBrand,
     userAgent: ua,
     viewport,
     deviceScaleFactor,
@@ -198,6 +547,7 @@ function buildFingerprint(botName, opts = {}) {
     audioNoise,
     rectNoise,
     chromeMajor,
+    firefoxMajor,
     screen: {
       width: screenWidth,
       height: screenHeight,
@@ -212,7 +562,7 @@ function buildFingerprint(botName, opts = {}) {
 }
 
 /**
- * Playwright launchPersistentContext option overrides from fingerprint.
+ * Playwright launchPersistentContext / newContext option overrides from fingerprint.
  */
 function contextOptionsFromFp(fp) {
   return {
@@ -228,13 +578,18 @@ function contextOptionsFromFp(fp) {
 }
 
 /**
- * Extra HTTP headers so Client Hints match the spoofed UA (Level 1).
- * Apply via context.setExtraHTTPHeaders after launch if desired.
+ * Extra HTTP headers so Client Hints match the spoofed brand/UA.
+ * CHANGE: brand-aware sec-ch-ua
  */
 function clientHintHeaders(fp) {
   const major = fp.chromeMajor || '131';
+  const brand = fp.chBrand || fp.browserBrand || 'Google Chrome';
+  // Firefox / Safari typically do not send Chromium-style CH; still set for chromium engine
+  if (fp.engine === 'firefox' || fp.engine === 'webkit') {
+    return {};
+  }
   return {
-    'sec-ch-ua': `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not_A Brand";v="24"`,
+    'sec-ch-ua': `"${brand}";v="${major}", "Chromium";v="${major}", "Not_A Brand";v="24"`,
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': fp.uaPlatform || '"Windows"',
   };
@@ -285,189 +640,125 @@ function fingerprintInitScript(/* fp ignored – data comes from 2nd arg */) {
       });
     } catch (_) {}
 
-    // ---- plugins ----
+    // ---- vendor (Safari vs Chrome-ish) ----
     try {
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => {
-          const fake = [
-            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-          ];
-          fake.item = (i) => fake[i] || null;
-          fake.namedItem = (n) => fake.find((x) => x.name === n) || null;
-          fake.refresh = () => {};
-          return fake;
-        },
-      });
-    } catch (_) {}
-
-    // ---- screen ----
-    try {
-      const s = fpData.screen || {};
-      const screenProps = {
-        width: s.width || 1366,
-        height: s.height || 768,
-        availWidth: s.availWidth || s.width || 1366,
-        availHeight: s.availHeight || (s.height || 768) - 40,
-        colorDepth: s.colorDepth || 24,
-        pixelDepth: s.pixelDepth || 24,
-      };
-      for (const [k, v] of Object.entries(screenProps)) {
-        try {
-          Object.defineProperty(screen, k, { get: () => v, configurable: true });
-        } catch (_) {}
+      if (fpData.engine === 'webkit') {
+        Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
+      } else if (fpData.engine === 'firefox') {
+        Object.defineProperty(navigator, 'vendor', { get: () => '' });
+      } else {
+        Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
       }
     } catch (_) {}
 
-    // ---- window outer size (match spoofed chrome UI) ----
+    // ---- WebGL ----
     try {
+      const getParam = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function (param) {
+        if (param === 37445) return (fpData.webgl && fpData.webgl.vendor) || 'Google Inc. (NVIDIA)';
+        if (param === 37446) return (fpData.webgl && fpData.webgl.renderer) || 'ANGLE (NVIDIA)';
+        return getParam.call(this, param);
+      };
+      if (typeof WebGL2RenderingContext !== 'undefined') {
+        const getParam2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function (param) {
+          if (param === 37445) return (fpData.webgl && fpData.webgl.vendor) || 'Google Inc. (NVIDIA)';
+          if (param === 37446) return (fpData.webgl && fpData.webgl.renderer) || 'ANGLE (NVIDIA)';
+          return getParam2.call(this, param);
+        };
+      }
+    } catch (_) {}
+
+    // ---- Canvas noise (seeded) ----
+    try {
+      const noise = fpData.canvasNoise || 0;
+      const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function () {
+        const ctx = this.getContext('2d');
+        if (ctx && this.width > 0 && this.height > 0) {
+          try {
+            const img = ctx.getImageData(0, 0, Math.min(8, this.width), 1);
+            for (let i = 0; i < img.data.length; i += 4) {
+              img.data[i] = (img.data[i] + noise) % 256;
+            }
+            ctx.putImageData(img, 0, 0);
+          } catch (_) {}
+        }
+        return toDataURL.apply(this, arguments);
+      };
+    } catch (_) {}
+
+    // ---- Audio noise ----
+    try {
+      if (typeof OfflineAudioContext !== 'undefined' || typeof webkitOfflineAudioContext !== 'undefined') {
+        const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+        const orig = Offline.prototype.startRendering;
+        Offline.prototype.startRendering = function () {
+          return orig.apply(this, arguments).then((buf) => {
+            try {
+              const ch = buf.getChannelData(0);
+              const n = fpData.audioNoise || 0.00001;
+              for (let i = 0; i < Math.min(ch.length, 32); i++) ch[i] += n;
+            } catch (_) {}
+            return buf;
+          });
+        };
+      }
+    } catch (_) {}
+
+    // ---- Screen / outer size ----
+    try {
+      if (fpData.screen) {
+        Object.defineProperty(screen, 'width', { get: () => fpData.screen.width });
+        Object.defineProperty(screen, 'height', { get: () => fpData.screen.height });
+        Object.defineProperty(screen, 'availWidth', { get: () => fpData.screen.availWidth });
+        Object.defineProperty(screen, 'availHeight', { get: () => fpData.screen.availHeight });
+        Object.defineProperty(screen, 'colorDepth', { get: () => fpData.screen.colorDepth || 24 });
+        Object.defineProperty(screen, 'pixelDepth', { get: () => fpData.screen.pixelDepth || 24 });
+      }
       if (fpData.outerWidth) {
-        Object.defineProperty(window, 'outerWidth', { get: () => fpData.outerWidth, configurable: true });
+        Object.defineProperty(window, 'outerWidth', { get: () => fpData.outerWidth });
       }
       if (fpData.outerHeight) {
-        Object.defineProperty(window, 'outerHeight', { get: () => fpData.outerHeight, configurable: true });
+        Object.defineProperty(window, 'outerHeight', { get: () => fpData.outerHeight });
       }
     } catch (_) {}
 
-    // ---- WebGL vendor/renderer ----
+    // ---- ClientRects slight noise ----
     try {
-      const patch = (proto) => {
-        if (!proto || !proto.getParameter) return;
-        const original = proto.getParameter;
-        proto.getParameter = function (param) {
-          if (param === 37445) return (fpData.webgl && fpData.webgl.vendor) || original.call(this, param);
-          if (param === 37446) return (fpData.webgl && fpData.webgl.renderer) || original.call(this, param);
-          return original.call(this, param);
-        };
-      };
-      if (typeof WebGLRenderingContext !== 'undefined') patch(WebGLRenderingContext.prototype);
-      if (typeof WebGL2RenderingContext !== 'undefined') patch(WebGL2RenderingContext.prototype);
-    } catch (_) {}
-
-    // ---- Canvas noise (stable per bot, light) ----
-    try {
-      const noise = (fpData.canvasNoise | 0) % 256;
-      const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-      const origToBlob = HTMLCanvasElement.prototype.toBlob;
-      const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-
-      const applyNoise = (canvas) => {
-        try {
-          const ctx = canvas.getContext('2d');
-          if (!ctx || canvas.width < 1 || canvas.height < 1) return;
-          const w = Math.min(canvas.width, 8);
-          const h = Math.min(canvas.height, 8);
-          const img = ctx.getImageData(0, 0, w, h);
-          for (let i = 0; i < img.data.length; i += 4) {
-            img.data[i] = (img.data[i] + noise) % 256;
-          }
-          ctx.putImageData(img, 0, 0);
-        } catch (_) {}
-      };
-
-      HTMLCanvasElement.prototype.toDataURL = function () {
-        applyNoise(this);
-        return origToDataURL.apply(this, arguments);
-      };
-      HTMLCanvasElement.prototype.toBlob = function () {
-        applyNoise(this);
-        return origToBlob.apply(this, arguments);
-      };
-      CanvasRenderingContext2D.prototype.getImageData = function () {
-        const data = origGetImageData.apply(this, arguments);
-        try {
-          if (data && data.data && data.data.length) {
-            data.data[0] = (data.data[0] + noise) % 256;
-          }
-        } catch (_) {}
-        return data;
-      };
-    } catch (_) {}
-
-    // ---- AudioContext noise ----
-    try {
-      const Offline = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-      if (Offline && Offline.prototype.startRendering) {
-        const orig = Offline.prototype.startRendering;
-        const aNoise = typeof fpData.audioNoise === 'number' ? fpData.audioNoise : 0.00005;
-        Offline.prototype.startRendering = function () {
-          return orig.apply(this, arguments).then((buffer) => {
-            try {
-              const ch = buffer.getChannelData(0);
-              if (ch && ch.length > 0) ch[0] = (ch[0] || 0) + aNoise;
-            } catch (_) {}
-            return buffer;
-          });
-        };
-      }
-    } catch (_) {}
-
-    // ---- ClientRects slight noise (stable) ----
-    try {
-      const rNoise = (fpData.rectNoise | 0) % 3;
-      if (rNoise > 0) {
-        const patchRect = (proto, method) => {
-          if (!proto || !proto[method]) return;
-          const orig = proto[method];
-          proto[method] = function () {
-            const r = orig.apply(this, arguments);
-            if (!r) return r;
-            try {
-              const o = {
-                x: r.x + rNoise * 0.01,
-                y: r.y,
-                width: r.width,
-                height: r.height,
-                top: r.top,
-                right: r.right + rNoise * 0.01,
-                bottom: r.bottom,
-                left: r.left + rNoise * 0.01,
-              };
-              o.toJSON = () => o;
-              return o;
-            } catch (_) {
-              return r;
-            }
+      const noisePx = fpData.rectNoise || 0;
+      if (noisePx) {
+        const orig = Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect = function () {
+          const r = orig.call(this);
+          return {
+            x: r.x + noisePx * 0.1,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+            top: r.top,
+            right: r.right + noisePx * 0.1,
+            bottom: r.bottom,
+            left: r.left + noisePx * 0.1,
+            toJSON: () => {},
           };
         };
-        patchRect(Element.prototype, 'getBoundingClientRect');
-        if (Range && Range.prototype) patchRect(Range.prototype, 'getBoundingClientRect');
       }
     } catch (_) {}
 
-    // ---- Permissions (notifications) ----
-    try {
-      const origQuery = navigator.permissions && navigator.permissions.query;
-      if (origQuery) {
-        navigator.permissions.query = function (desc) {
-          if (desc && desc.name === 'notifications') {
-            return Promise.resolve({ state: 'prompt', onchange: null });
-          }
-          return origQuery.apply(this, arguments).catch(() => ({ state: 'prompt', onchange: null }));
-        };
-      }
-    } catch (_) {}
-
-    // ---- Battery (hide real device signal) ----
+    // ---- Battery / connection soft stubs ----
     try {
       if (navigator.getBattery) {
-        navigator.getBattery = function () {
-          return Promise.resolve({
-            charging: true,
-            chargingTime: 0,
-            dischargingTime: Infinity,
-            level: 0.85 + ((fpData.canvasNoise || 0) % 10) / 100,
-            addEventListener: function () {},
-            removeEventListener: function () {},
-            onchargingchange: null,
-            onlevelchange: null,
-          });
-        };
+        navigator.getBattery = async () => ({
+          charging: true,
+          chargingTime: 0,
+          dischargingTime: Infinity,
+          level: 0.85 + ((fpData.canvasNoise || 0) % 10) / 100,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        });
       }
     } catch (_) {}
-
-    // ---- connection (optional soft values) ----
     try {
       if (navigator.connection || navigator.mozConnection || navigator.webkitConnection) {
         const fakeConn = {
@@ -475,8 +766,8 @@ function fingerprintInitScript(/* fp ignored – data comes from 2nd arg */) {
           rtt: 50 + ((fpData.canvasNoise || 0) % 40),
           downlink: 8 + ((fpData.canvasNoise || 0) % 5),
           saveData: false,
-          addEventListener: function () {},
-          removeEventListener: function () {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
         };
         try {
           Object.defineProperty(navigator, 'connection', { get: () => fakeConn, configurable: true });
@@ -488,12 +779,13 @@ function fingerprintInitScript(/* fp ignored – data comes from 2nd arg */) {
 
 function logFingerprint(fp) {
   console.log(
-    `[FP] ${fp.botName} → UA=${fp.userAgent.slice(0, 50)}… | ${fp.viewport.width}x${fp.viewport.height} @${fp.deviceScaleFactor || 1}x | ${fp.locale} ${fp.timezoneId} | cores=${fp.hardwareConcurrency} mem=${fp.deviceMemory} | canvas=${fp.canvasNoise}`
+    `[FP] ${fp.botName} → brand=${fp.browserBrand || '?'} engine=${fp.engine || '?'} | UA=${(fp.userAgent || '').slice(0, 55)}… | ${fp.viewport.width}x${fp.viewport.height} @${fp.deviceScaleFactor || 1}x | ${fp.locale} ${fp.timezoneId} | cores=${fp.hardwareConcurrency} mem=${fp.deviceMemory} | canvas=${fp.canvasNoise}`
   );
 }
 
 /**
  * Serializable payload for addInitScript 2nd argument.
+ * CHANGE: include engine so init script can set vendor correctly
  */
 function initScriptPayload(fp) {
   return {
@@ -509,6 +801,8 @@ function initScriptPayload(fp) {
     screen: fp.screen,
     outerWidth: fp.outerWidth,
     outerHeight: fp.outerHeight,
+    engine: fp.engine,
+    browserBrand: fp.browserBrand,
   };
 }
 
@@ -519,4 +813,9 @@ module.exports = {
   logFingerprint,
   clientHintHeaders,
   initScriptPayload,
+  // CHANGE: export brand helpers for bot.service
+  BROWSER_BRANDS,
+  pickStableBrowserBrand,
+  getEngineForBrand,
+  getBrandMeta,
 };

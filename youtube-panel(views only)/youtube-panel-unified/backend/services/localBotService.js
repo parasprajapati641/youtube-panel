@@ -28,19 +28,14 @@ function detectAction(service) {
   return 'like';
 }
 
+/**
+ * Use ordered quantity as-is.
+ * Min/max limit = only Service.minQuantity / maxQuantity in DATABASE
+ * (checked in orderController). No code / .env cap here.
+ */
 function toBotCount(quantity) {
   const q = parseInt(quantity, 10) || 1;
-  // Limit ONLY from .env (no hardcoded 50)
-  // ORDER_QUANTITY_MAX or BOT_COUNT_MAX — default 500 if unset
-  const maxQ = Math.max(
-    1,
-    parseInt(process.env.ORDER_QUANTITY_MAX || process.env.BOT_COUNT_MAX || '500', 10) || 500
-  );
-  const minQ = Math.max(
-    1,
-    parseInt(process.env.ORDER_QUANTITY_MIN || '1', 10) || 1
-  );
-  return Math.min(maxQ, Math.max(minQ, q));
+  return Math.max(1, q);
 }
 
 function resolveOrderQuery(jobId, orderId) {

@@ -3,6 +3,7 @@ const fs = require('fs');
 const { chromium, firefox, webkit } = require('playwright');
 const Bot = require('../models/bot.model');
 const BotLike = require('../models/botLike.model');
+const ViewBot = require('../models/viewBot.model');
 const { normalizeCookies, hasAuthCookies } = require('../utils/cookie.util');
 const { findChromePath, findBrowserPath, vmwareArgs } = require('../utils/browser.util');
 const {
@@ -12,6 +13,11 @@ const {
   logFingerprint,
   clientHintHeaders,
   initScriptPayload,
+  // CHANGE: multi-browser brand helpers (stable per view profile)
+  BROWSER_BRANDS,
+  pickStableBrowserBrand,
+  getEngineForBrand,
+  getBrandMeta,
 } = require('../utils/fingerprint.util');
 const { generateCommentsForVideo } = require('../utils/smartComment.util');
 
@@ -24,6 +30,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * - chrome / chromium / brave → Chromium family
  * - firefox
  * - webkit ≈ Safari-like engine (real Safari only on macOS)
+ *
+ * CHANGE: Prefer brand-based assignment from fingerprint.util (BROWSER_BRANDS).
+ * This list is kept as a fallback for older code paths.
  */
 const VIEW_BROWSER_KINDS = ['chrome', 'chromium', 'brave', 'firefox', 'webkit'];
 
@@ -172,17 +181,124 @@ console.log('[PROFILES] Using root:', PROFILES_ROOT);
 
 function profileDir(botName) {
   let safe = String(botName).replace(/[^a-zA-Z0-9_-]/g, '_');
-  // Use bot_ prefix only if name does not already start with bot_
-  if (!safe.toLowerCase().startsWith('bot_') && !safe.toLowerCase().startsWith('bot-')) {
+  // Keep view_bot_001 style as-is (guest view profiles)
+  if (/^view_bot_/i.test(safe)) {
+    // ok
+  } else if (!safe.toLowerCase().startsWith('bot_') && !safe.toLowerCase().startsWith('bot-')) {
     safe = `bot_${safe}`;
   } else {
-    // normalize bot-4 → bot_4 for clean folder name
     safe = safe.replace(/^bot[-_]/i, 'bot_');
   }
   const dir = path.join(PROFILES_ROOT, safe);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+/** Guest view profile name: view_bot_001, view_bot_002, ... */
+function viewProfileName(index1Based) {
+  const n = Math.max(1, parseInt(index1Based, 10) || 1);
+  return `view_bot_${String(n).padStart(3, '0')}`;
+}
+
+const VIEW_COOLDOWN_MS = () => {
+  const h = parseInt(process.env.VIEW_COOLDOWN_HOURS || '48', 10);
+  return Math.max(1, isNaN(h) ? 48 : h) * 3600 * 1000;
+};
+
+function viewCooldownPath(profileName) {
+  return path.join(profileDir(profileName), '.view_cooldown.json');
+}
+
+function loadViewCooldown(profileName) {
+  try {
+    const p = viewCooldownPath(profileName);
+    if (!fs.existsSync(p)) return {};
+    return JSON.parse(fs.readFileSync(p, 'utf8') || '{}') || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveViewCooldown(profileName, data) {
+  try {
+    const p = viewCooldownPath(profileName);
+    fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.warn(`[VIEWS] cooldown save fail ${profileName}:`, e.message);
+  }
+}
+
+function isViewProfileOnCooldown(profileName, videoId) {
+  if (!videoId) return false;
+  const data = loadViewCooldown(profileName);
+  const ts = data[videoId];
+  if (!ts) return false;
+  return Date.now() - Number(ts) < VIEW_COOLDOWN_MS();
+}
+
+function markViewProfileWatched(profileName, videoId) {
+  if (!videoId) return;
+  const data = loadViewCooldown(profileName);
+  data[videoId] = Date.now();
+  saveViewCooldown(profileName, data);
+}
+
+function extractYoutubeVideoId(url) {
+  try {
+    const u = String(url || '');
+    const m =
+      u.match(/[?&]v=([a-zA-Z0-9_-]{6,})/) ||
+      u.match(/youtu\.be\/([a-zA-Z0-9_-]{6,})/) ||
+      u.match(/\/shorts\/([a-zA-Z0-9_-]{6,})/) ||
+      u.match(/\/embed\/([a-zA-Z0-9_-]{6,})/);
+    return m ? m[1] : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Pick N guest view profiles not on 48h cooldown for this videoId.
+ * Creates profiles/view_bot_001 ... as needed (never deletes them).
+ */
+function pickGuestViewProfiles(count, videoId) {
+  const need = Math.max(1, parseInt(count, 10) || 1);
+  const maxPool = Math.max(
+    need,
+    parseInt(process.env.VIEW_PROFILE_POOL_MAX || '5000', 10) || 5000
+  );
+  const picked = [];
+  let idx = 1;
+  while (picked.length < need && idx <= maxPool) {
+    const name = viewProfileName(idx);
+    profileDir(name); // ensure folder exists
+    if (!isViewProfileOnCooldown(name, videoId)) {
+      picked.push(name);
+    }
+    idx++;
+  }
+  // If still short (all on cooldown), take next fresh indices beyond scanned
+  while (picked.length < need && idx <= maxPool + need) {
+    const name = viewProfileName(idx);
+    profileDir(name);
+    picked.push(name);
+    idx++;
+  }
+  return picked;
+}
+
+const WARMUP_KEYWORDS = [
+  'music',
+  'news today',
+  'funny videos',
+  'cooking recipe',
+  'football highlights',
+  'tech review',
+  'travel vlog',
+  'lofi hip hop',
+  'nature documentary',
+  'how to',
+];
 
 function normalizeCommentList(comments) {
   const list =
@@ -272,12 +388,15 @@ class BotService {
 
     // ========== Per-bot fingerprint FIRST (before any YouTube open) ==========
     // Same botName → stable FP; different bots → different FP (safe for concurrent bots)
+    // CHANGE: each bot also gets a stable browserBrand (UA spoof). Logged-in bots stay on
+    // chromium engine (profile cookies already tied to chromium); views use multi-engine.
     const fpLowMem =
       lowMem ||
       process.env.LOW_MEMORY === 'true' ||
       process.env.LOW_RAM === 'true' ||
       process.env.VMWARE === 'true';
-    const fp = buildFingerprint(botName, { lowMem: fpLowMem });
+    const botBrand = pickStableBrowserBrand(botName);
+    const fp = buildFingerprint(botName, { lowMem: fpLowMem, browserBrand: botBrand });
     logFingerprint(fp);
     const fpOpts = contextOptionsFromFp(fp);
 
@@ -1496,9 +1615,23 @@ class BotService {
         await page.mouse.move(x, y, { steps: 5 + Math.floor(Math.random() * 10) });
       } catch (_) {}
 
+      // CHANGE: page scroll while video keeps playing (human-like browsing comments area)
+      try {
+        if (step % 2 === 0) {
+          await page.evaluate(() => {
+            window.scrollBy(0, 100 + Math.floor(Math.random() * 280));
+          });
+        } else if (step % 5 === 0) {
+          await page.evaluate(() => {
+            window.scrollBy(0, -(60 + Math.floor(Math.random() * 120)));
+          });
+        }
+      } catch (_) {}
+
       try {
         await page.evaluate(() => {
-          const video = document.querySelector('video');
+          const video =
+            document.querySelector('video') || document.querySelector('#movie_player video');
           if (video && video.paused) video.play().catch(() => {});
         });
       } catch (_) {}
@@ -1508,7 +1641,7 @@ class BotService {
       await sleep(Math.min(1500 + Math.floor(Math.random() * 800), left));
     }
 
-    console.log(`[${botName}] Watch done (${sec}s, audio-only, mouse steps=${step})`);
+    console.log(`[${botName}] Watch done (${sec}s, mouse+scroll steps=${step})`);
     return sec;
   }
 
@@ -2395,10 +2528,8 @@ class BotService {
     return results;
   }
 
-  /**
-   * ========== OLD Views (login bots required) – COMMENTED OUT ==========
-   * Previously used registered bots + cookies + login check.
-   * Kept for reference only. Do not delete.
+  /*
+   * ========== OLD Views #1 – LOGIN BOTS (registered cookies) – COMMENTED ==========
    *
    * async processViews_OLD_LOGIN(videoUrl, opts = {}) {
    *   let bots = [];
@@ -2414,62 +2545,112 @@ class BotService {
    *   const staggerBase = Math.max(0, parseInt(process.env.BOT_STAGGER_MS || '7000', 10));
    *   const staggerJitter = Math.max(0, parseInt(process.env.BOT_STAGGER_JITTER_MS || '3000', 10));
    *   const results = await runWithConcurrency(bots, concurrency, async (bot, index) => {
-   *     ...
+   *     if (index < concurrency && (staggerBase > 0 || staggerJitter > 0)) {
+   *       const delay = index * staggerBase + Math.floor(Math.random() * (staggerJitter + 1));
+   *       if (delay > 0) await sleep(delay);
+   *     }
    *     return this.performActionWithBot(videoUrl, bot, {
    *       viewOnly: true, doLike: false, doComment: false,
    *     });
    *   });
    *   return results;
    * }
-   * ========== END OLD Views ==========
+   * ========== END OLD Views #1 ==========
+   */
+
+  /*
+   * ========== OLD Views #2 – ANONYMOUS disposable browser (no persistent profile) – COMMENTED ==========
+   * Previous no-login flow: fresh browser each time, rotate chrome/brave/firefox/webkit, direct goto URL.
+   * Replaced by Guest Persistent Profile flow below. Do not delete.
+   *
+   * async processViews_OLD_ANONYMOUS(videoUrl, opts = {}) {
+   *   const count = Math.max(1, parseInt(opts.botCount, 10) || 1);
+   *   const sessions = Array.from({ length: count }, (_, i) => ({
+   *     sessionId: `view-${Date.now()}-${i + 1}`,
+   *     index: i,
+   *   }));
+   *   const concurrency = getBotConcurrency(sessions.length);
+   *   const staggerBase = Math.max(0, parseInt(process.env.BOT_STAGGER_MS || '7000', 10));
+   *   const staggerJitter = Math.max(0, parseInt(process.env.BOT_STAGGER_JITTER_MS || '3000', 10));
+   *   const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+   *   const results = await runWithConcurrency(sessions, concurrency, async (session, index) => {
+   *     if (index < concurrency && (staggerBase > 0 || staggerJitter > 0)) {
+   *       const delay = index * staggerBase + Math.floor(Math.random() * (staggerJitter + 1));
+   *       if (delay > 0) await sleep(delay);
+   *     }
+   *     const result = await this._performAnonymousView(videoUrl, session);
+   *     if (onProgress) await onProgress(result);
+   *     return result;
+   *   });
+   *   return results;
+   * }
+   *
+   * async _launchAnonymousViewBrowser(sessionId, browserKind) {
+   *   // firefox / webkit / chromium.launch + newContext (NOT persistent)
+   *   // rotate VIEW_BROWSER_KINDS: chrome, chromium, brave, firefox, webkit
+   *   // fingerprint via buildFingerprint(sessionId)
+   * }
+   *
+   * async _performAnonymousView(videoUrl, session) {
+   *   // launch → page.goto(videoUrl) → _humanStartVideo → _watchVideo(viewOnly)
+   *   // browser.close() – no profile saved
+   * }
+   * ========== END OLD Views #2 ==========
    */
 
   /**
-   * Views (NEW): NO LOGIN.
-   * - Opens a fresh browser (no profile / no cookies)
-   * - Goes to YouTube video and watches
-   * - Rotates browser engines: Chrome, Chromium, Brave, Firefox, WebKit (Safari-like)
-   * Quantity = number of anonymous sessions.
-   * Watch duration: VIEW_WATCH_TIME_MIN/MAX (default 180–360s).
+   * Views (ACTIVE): Guest Persistent Profiles – NO Gmail login.
    *
-   * Env:
-   *   VIEW_BROWSERS=chrome,chromium,brave,firefox,webkit
-   *   HEADLESS=true|false
+   * Flow per unit:
+   *  1) Pick profile profiles/view_bot_001 … (create if missing)
+   *  2) launchPersistentContext – fixed fingerprint per profile name
+   *  3) Warm-up (first time): YT home → search keyword → watch random 20–30s
+   *  4) Search target video by title → open → human watch
+   *  5) Close context – folder + cookies KEPT
+   *  6) 48h cooldown: same profile + same videoId not reused
    */
   async processViews(videoUrl, opts = {}) {
-    // Session count from .env only (ORDER_QUANTITY_MAX / BOT_COUNT_MAX)
-    const maxQ = Math.max(
-      1,
-      parseInt(process.env.ORDER_QUANTITY_MAX || process.env.BOT_COUNT_MAX || '500', 10) || 500
-    );
-    const count = Math.min(maxQ, Math.max(1, parseInt(opts.botCount, 10) || 1));
-    const sessions = Array.from({ length: count }, (_, i) => ({
-      sessionId: `view-${Date.now()}-${i + 1}`,
-      index: i,
-    }));
+    const count = Math.max(1, parseInt(opts.botCount, 10) || 1);
+    const videoId = extractYoutubeVideoId(videoUrl);
+    const profiles = pickGuestViewProfiles(count, videoId);
 
-    const concurrency = getBotConcurrency(sessions.length);
+    const concurrency = getBotConcurrency(profiles.length);
     const staggerBase = Math.max(0, parseInt(process.env.BOT_STAGGER_MS || '7000', 10));
     const staggerJitter = Math.max(0, parseInt(process.env.BOT_STAGGER_JITTER_MS || '3000', 10));
 
     console.log(
-      `[VIEWS] ${sessions.length} anonymous session(s) | concurrency=${concurrency} | no-login | → ${videoUrl}`
+      `[VIEWS] ${profiles.length} guest profile(s) | concurrency=${concurrency} | no-login | cooldown=${VIEW_COOLDOWN_MS() / 3600000}h | → ${videoUrl}`
     );
+
+    // Resolve title once (search query)
+    let videoTitle = opts.videoTitle || null;
+    if (!videoTitle) {
+      try {
+        videoTitle = await this._fetchYoutubeTitle(videoUrl, videoId);
+      } catch (e) {
+        console.warn('[VIEWS] title fetch failed, will use videoId search:', e.message);
+      }
+    }
+    if (!videoTitle) videoTitle = videoId || 'youtube video';
 
     const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
 
-    const results = await runWithConcurrency(sessions, concurrency, async (session, index) => {
+    const results = await runWithConcurrency(profiles, concurrency, async (profileName, index) => {
       if (index < concurrency && (staggerBase > 0 || staggerJitter > 0)) {
         const delay =
           index * staggerBase + Math.floor(Math.random() * (staggerJitter + 1));
         if (delay > 0) {
           console.log(
-            `[VIEWS] ${session.sessionId} stagger wait ${Math.round(delay / 1000)}s (wave index=${index}/${concurrency})`
+            `[VIEWS] ${profileName} stagger wait ${Math.round(delay / 1000)}s (wave ${index}/${concurrency})`
           );
           await sleep(delay);
         }
       }
-      const result = await this._performAnonymousView(videoUrl, session);
+      const result = await this._performGuestView(videoUrl, {
+        profileName,
+        videoId,
+        videoTitle,
+      });
       if (onProgress) {
         try {
           await onProgress(result);
@@ -2486,196 +2667,855 @@ class BotService {
     return results;
   }
 
+  async _fetchYoutubeTitle(videoUrl, videoId) {
+    // oEmbed – no API key
+    const id = videoId || extractYoutubeVideoId(videoUrl);
+    const oembed = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`;
+    try {
+      const axios = require('axios');
+      const { data } = await axios.get(oembed, { timeout: 10000 });
+      if (data && data.title) return String(data.title).trim();
+    } catch (_) {}
+    return id || null;
+  }
+
   /**
-   * Launch a disposable browser for anonymous view (no persistent profile, no cookies).
-   * Rotates Chrome / Brave / Chromium / Firefox / WebKit.
+   * Upsert ViewBot document – separate collection from Bot (likes/comments).
+   * Saves fingerprint + cookies to MongoDB.
    */
-  async _launchAnonymousViewBrowser(sessionId, browserKind) {
+  async _upsertViewBotDb(profileName, patch = {}) {
+    try {
+      const update = {
+        ...patch,
+        profileName,
+        updatedAt: new Date(),
+      };
+      if (Array.isArray(patch.cookies)) {
+        update.cookieCount = patch.cookies.length;
+      }
+      const doc = await ViewBot.findOneAndUpdate(
+        { profileName },
+        { $set: update, $setOnInsert: { createdAt: new Date() } },
+        { upsert: true, new: true }
+      );
+      return doc;
+    } catch (e) {
+      console.warn(`[VIEWS] ViewBot DB upsert fail ${profileName}:`, e.message);
+      return null;
+    }
+  }
+
+  async _saveViewBotCookiesFromContext(context, profileName, extra = {}) {
+    try {
+      const raw = (await context.cookies()) || [];
+      const cookies = normalizeCookies(raw);
+      await this._upsertViewBotDb(profileName, {
+        cookies,
+        cookieCount: cookies.length,
+        ...extra,
+      });
+      console.log(`[VIEWS] ${profileName} DB saved ${cookies.length} cookies + meta`);
+      return cookies;
+    } catch (e) {
+      console.warn(`[VIEWS] ${profileName} cookie DB save fail:`, e.message);
+      return [];
+    }
+  }
+
+  /**
+   * launchPersistentContext for guest view profile.
+   * Profile folder NEVER deleted after run.
+   *
+   * CHANGE (2026-11):
+   *  - Load saved fingerprint + browserBrand from ViewBot DB when present → reuse exactly.
+   *  - Otherwise assign a stable different browserBrand from BROWSER_BRANDS (Chrome, Safari,
+   *    Edge, Firefox, Brave, Opera, …) and build + save fingerprint.
+   *  - Launch real Playwright engine: chromium | firefox | webkit based on brand.
+   *    (Other brands are spoofed via UA / Client Hints / navigator on closest engine.)
+   */
+  async _launchGuestViewProfile(profileName) {
+    const userDataDir = profileDir(profileName);
     const isHeadless = process.env.HEADLESS !== 'false';
     const { args: baseArgs, width, height, lowMem } = vmwareArgs();
     const args = [...baseArgs];
     if (!isHeadless && !lowMem) args.push('--start-maximized');
 
-    const fp = buildFingerprint(sessionId, { lowMem });
-    logFingerprint(fp);
-    const fpOpts = contextOptionsFromFp(fp);
-
-    const viewport = lowMem
-      ? { width: width || 1024, height: height || 576 }
-      : fpOpts.viewport || { width: 1366, height: 768 };
-
-    const kind = String(browserKind || 'chromium').toLowerCase();
-    console.log(`[VIEWS] ${sessionId} launching browser kind="${kind}" headless=${isHeadless}`);
-
-    let browser;
-    let context;
-
+    // ----- CHANGE: load existing brand + fingerprint from DB (reuse next time) -----
+    let existingDoc = null;
     try {
-      if (kind === 'firefox') {
-        browser = await firefox.launch({
-          headless: isHeadless,
-          args: ['--no-sandbox'].filter(Boolean),
-        });
-        context = await browser.newContext({
-          viewport,
-          userAgent: fpOpts.userAgent,
-          locale: fpOpts.locale || 'en-US',
-          timezoneId: fpOpts.timezoneId,
-        });
-      } else if (kind === 'webkit' || kind === 'safari') {
-        // WebKit ≈ Safari engine (real Safari binary only on macOS)
-        browser = await webkit.launch({ headless: isHeadless });
-        context = await browser.newContext({
-          viewport,
-          userAgent: fpOpts.userAgent,
-          locale: fpOpts.locale || 'en-US',
-          timezoneId: fpOpts.timezoneId,
-        });
-      } else {
-        // chromium family: chrome | chromium | brave | edge
-        const launchOpts = {
-          headless: isHeadless,
-          args,
-          ignoreDefaultArgs: ['--enable-automation'],
-        };
-
-        if (kind === 'brave') {
-          const bravePath =
-            process.env.BRAVE_PATH ||
-            findBrowserPath() ||
-            findChromePath();
-          if (bravePath && /brave/i.test(bravePath)) {
-            launchOpts.executablePath = bravePath;
-            console.log(`[VIEWS] Using Brave executable: ${bravePath}`);
-          } else if (bravePath) {
-            // Fallback to whatever system browser we found
-            launchOpts.executablePath = bravePath;
-            console.log(`[VIEWS] Brave not found – using: ${bravePath}`);
-          } else {
-            launchOpts.channel = 'chrome';
-            console.log('[VIEWS] Brave not found – falling back to channel=chrome');
-          }
-        } else if (kind === 'chrome' || kind === 'msedge' || kind === 'edge') {
-          const channel = kind === 'edge' ? 'msedge' : kind === 'msedge' ? 'msedge' : 'chrome';
-          try {
-            launchOpts.channel = channel;
-          } catch (_) {
-            // ignore
-          }
-          // If system Chrome path exists, prefer it
-          const chromePath = findChromePath();
-          if (chromePath && !/brave/i.test(chromePath)) {
-            launchOpts.executablePath = chromePath;
-            delete launchOpts.channel;
-            console.log(`[VIEWS] Using system Chrome: ${chromePath}`);
-          }
-        } else {
-          // plain chromium – Playwright bundled
-          console.log('[VIEWS] Using Playwright bundled Chromium');
-        }
-
-        browser = await chromium.launch(launchOpts);
-        context = await browser.newContext({
-          viewport,
-          userAgent: fpOpts.userAgent,
-          locale: fpOpts.locale || 'en-US',
-          timezoneId: fpOpts.timezoneId,
-          // extraHTTPHeaders: clientHintHeaders(fp), // optional
-        });
-      }
-    } catch (err) {
-      // Fallback to bundled Chromium if chosen browser fails (e.g. no Firefox installed)
-      console.warn(
-        `[VIEWS] ${sessionId} browser "${kind}" failed (${err.message}) – fallback to Chromium`
-      );
-      if (browser) await browser.close().catch(() => {});
-      browser = await chromium.launch({
-        headless: isHeadless,
-        args,
-        ignoreDefaultArgs: ['--enable-automation'],
-      });
-      context = await browser.newContext({
-        viewport,
-        userAgent: fpOpts.userAgent,
-        locale: fpOpts.locale || 'en-US',
-        timezoneId: fpOpts.timezoneId,
-      });
+      existingDoc = await ViewBot.findOne({ profileName }).lean();
+    } catch (e) {
+      console.warn(`[VIEWS] ${profileName} ViewBot load fail:`, e.message);
     }
 
-    // Anti-detect init script when available
+    let fp;
+    let browserBrand;
+    let engine;
+
+    if (
+      existingDoc &&
+      existingDoc.fingerprint &&
+      existingDoc.fingerprint.userAgent &&
+      (existingDoc.browserBrand || existingDoc.fingerprint.browserBrand)
+    ) {
+      // Reuse saved fingerprint + brand (same profile → same identity forever)
+      fp = existingDoc.fingerprint;
+      browserBrand = existingDoc.browserBrand || fp.browserBrand || pickStableBrowserBrand(profileName);
+      engine = existingDoc.engine || fp.engine || getEngineForBrand(browserBrand);
+      // Ensure fields present on fp object for logging / init script
+      fp.browserBrand = browserBrand;
+      fp.engine = engine;
+      console.log(
+        `[VIEWS] ${profileName} REUSE saved brand=${browserBrand} engine=${engine}`
+      );
+    } else {
+      // First time: assign stable different brand, build FP, persist
+      browserBrand = pickStableBrowserBrand(profileName);
+      fp = buildFingerprint(profileName, { lowMem, browserBrand });
+      engine = fp.engine || getEngineForBrand(browserBrand);
+      console.log(
+        `[VIEWS] ${profileName} NEW brand=${browserBrand} engine=${engine} (saved for next runs)`
+      );
+    }
+
+    logFingerprint(fp);
+
+    // Persist fingerprint + brand so next view uses the exact same identity
+    await this._upsertViewBotDb(profileName, {
+      fingerprint: fp,
+      browserBrand,
+      engine,
+    });
+
+    const fpOpts = contextOptionsFromFp(fp);
+    const launchOpts = {
+      headless: !!isHeadless,
+      args: engine === 'chromium' ? args : args.filter((a) => !String(a).startsWith('--')), // firefox/webkit ignore most chrome flags
+      ignoreDefaultArgs: engine === 'chromium' ? ['--enable-automation'] : undefined,
+      ...fpOpts,
+      viewport: lowMem
+        ? { width: width || 1024, height: height || 576 }
+        : fpOpts.viewport || { width: 1366, height: 768 },
+    };
+
+    // Chromium-family: prefer system path / channel when it matches brand
+    if (engine === 'chromium') {
+      const meta = getBrandMeta(browserBrand);
+      const chromePath = findChromePath();
+      // Brave brand → prefer Brave path if present
+      if (browserBrand === 'Brave' && chromePath && /brave/i.test(chromePath)) {
+        launchOpts.executablePath = chromePath;
+        console.log(`[VIEWS] ${profileName} executablePath (Brave):`, chromePath);
+      } else if (meta.channel && !chromePath) {
+        // Playwright installed browser channel (chrome / msedge / chromium)
+        launchOpts.channel = meta.channel;
+        console.log(`[VIEWS] ${profileName} channel=${meta.channel}`);
+      } else if (chromePath && (browserBrand === 'Google Chrome' || browserBrand === 'Chromium' || browserBrand === 'Brave')) {
+        launchOpts.executablePath = chromePath;
+        console.log(`[VIEWS] ${profileName} executablePath:`, chromePath);
+      } else if (meta.channel) {
+        try {
+          launchOpts.channel = meta.channel;
+          console.log(`[VIEWS] ${profileName} channel=${meta.channel}`);
+        } catch (_) {}
+      }
+    }
+
+    console.log(
+      `[VIEWS] ${profileName} launchPersistentContext engine=${engine} brand=${browserBrand} dir=${userDataDir} headless=${isHeadless}`
+    );
+
+    // CHANGE: pick Playwright API by engine (not always chromium)
+    let context;
+    try {
+      if (engine === 'firefox') {
+        context = await firefox.launchPersistentContext(userDataDir, {
+          headless: !!isHeadless,
+          ...fpOpts,
+          viewport: launchOpts.viewport,
+        });
+      } else if (engine === 'webkit') {
+        context = await webkit.launchPersistentContext(userDataDir, {
+          headless: !!isHeadless,
+          ...fpOpts,
+          viewport: launchOpts.viewport,
+        });
+      } else {
+        context = await chromium.launchPersistentContext(userDataDir, launchOpts);
+      }
+    } catch (launchErr) {
+      // Fallback to bundled chromium if channel/path/engine fails
+      console.warn(
+        `[VIEWS] ${profileName} ${engine} launch failed (${launchErr.message}) → fallback chromium`
+      );
+      const fallbackOpts = { ...launchOpts };
+      delete fallbackOpts.channel;
+      delete fallbackOpts.executablePath;
+      context = await chromium.launchPersistentContext(userDataDir, fallbackOpts);
+      engine = 'chromium';
+    }
+
     try {
       if (typeof fingerprintInitScript === 'function') {
         const script = fingerprintInitScript(fp);
-        if (script) await context.addInitScript(script);
+        if (script) {
+          const payload =
+            typeof initScriptPayload === 'function' ? initScriptPayload(fp) : undefined;
+          if (payload !== undefined) await context.addInitScript(script, payload);
+          else await context.addInitScript(script);
+        }
+      }
+      // Client Hints for chromium-family
+      const ch = clientHintHeaders(fp);
+      if (ch && Object.keys(ch).length) {
+        await context.setExtraHTTPHeaders(ch).catch(() => {});
       }
     } catch (_) {}
 
-    const page = await context.newPage();
-    return { browser, context, page, browserKind: kind };
+    const page = context.pages()[0] || (await context.newPage());
+    return { context, page, profileName, userDataDir, browserBrand, engine, fingerprint: fp };
   }
 
   /**
-   * One anonymous view session: open browser → YouTube video → watch → close.
-   * No login, no cookies, no bot profile.
+   * Warm-up: YouTube home → random keyword search → open a video → watch 20–30s + scroll.
+   * Builds real YouTube cookies inside the persistent profile.
    */
-  async _performAnonymousView(videoUrl, session) {
-    const sessionId = session.sessionId || `view-${Date.now()}`;
-    const browserKind = pickViewBrowserKind(session.index || 0);
+  async _warmUpGuestProfile(page, profileName) {
+    const marker = path.join(profileDir(profileName), '.warmed');
+    const force = process.env.VIEW_FORCE_WARMUP === 'true';
+    if (!force && fs.existsSync(marker)) {
+      console.log(`[VIEWS] ${profileName} warm-up skip (already warmed)`);
+      return false;
+    }
 
+    console.log(`[VIEWS] ${profileName} warm-up start...`);
+    try {
+      await page.goto('https://www.youtube.com/', {
+        waitUntil: 'domcontentloaded',
+        timeout: navTimeout(),
+      });
+      await sleep(2000 + Math.floor(Math.random() * 1500));
+      await this._dismissBanners(page);
+
+      const kw = WARMUP_KEYWORDS[Math.floor(Math.random() * WARMUP_KEYWORDS.length)];
+      const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(kw)}`;
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+      await sleep(2000 + Math.floor(Math.random() * 2000));
+      await this._dismissBanners(page);
+
+      // Scroll results
+      for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
+        await page.evaluate(() => window.scrollBy(0, 400 + Math.floor(Math.random() * 400)));
+        await sleep(800 + Math.floor(Math.random() * 700));
+      }
+
+      // Click first/second video thumbnail
+      const thumbs = page.locator('ytd-video-renderer a#thumbnail, ytd-rich-item-renderer a#thumbnail');
+      const n = await thumbs.count().catch(() => 0);
+      if (n > 0) {
+        const pick = Math.min(n - 1, Math.floor(Math.random() * Math.min(n, 4)));
+        await thumbs.nth(pick).click({ timeout: 8000 }).catch(() => {});
+        await sleep(2500);
+        await this._dismissBanners(page);
+        await this._humanStartVideo(page, profileName).catch(() => {});
+        const warmSec = 20 + Math.floor(Math.random() * 11); // 20–30s
+        console.log(`[VIEWS] ${profileName} warm-up watch ${warmSec}s`);
+        await sleep(warmSec * 1000);
+        // light scroll during watch
+        await page.evaluate(() => window.scrollBy(0, 200)).catch(() => {});
+        await sleep(1000);
+      }
+
+      try {
+        fs.writeFileSync(marker, new Date().toISOString(), 'utf8');
+      } catch (_) {}
+      // Cookies already on disk via persistent context; also mirror to ViewBot DB after warm-up
+      try {
+        const ctx = page.context();
+        await this._saveViewBotCookiesFromContext(ctx, profileName, {
+          warmed: true,
+          lastWarmupAt: new Date(),
+        });
+      } catch (_) {}
+      console.log(`[VIEWS] ${profileName} warm-up done – cookies in profile + DB`);
+      return true;
+    } catch (e) {
+      console.warn(`[VIEWS] ${profileName} warm-up error:`, e.message);
+      return false;
+    }
+  }
+
+  /**
+   * CHANGE (2026-11): Search by title (natural), BUT only open OUR video (videoId match).
+   * - Never click first/random result (that opened wrong videos before).
+   * - If exact match not in results → direct goto order link.
+   * - Always ends on the video URL we were given – no other person's video.
+   */
+  async _searchAndOpenTargetVideo(page, profileName, videoUrl, videoTitle, videoId) {
+    const target =
+      videoUrl ||
+      (videoId ? `https://www.youtube.com/watch?v=${videoId}` : null);
+    if (!target) {
+      throw new Error('No videoUrl / videoId to open');
+    }
+
+    const query = (videoTitle || videoId || '').trim();
+
+    // ----- 1) Search by title (looks human) -----
+    if (query) {
+      const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+      console.log(`[VIEWS] ${profileName} search: "${query.slice(0, 80)}"`);
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+      await sleep(1800 + Math.floor(Math.random() * 1600));
+      await this._dismissBanners(page).catch(() => {});
+
+      // Light scroll on results (human)
+      try {
+        await page.evaluate(() => window.scrollBy(0, 150 + Math.floor(Math.random() * 300)));
+      } catch (_) {}
+      await sleep(500 + Math.floor(Math.random() * 800));
+
+      // ----- 2) ONLY click result that contains OUR videoId – never first/random -----
+      let openedOurVideo = false;
+      if (videoId) {
+        try {
+          const exact = page
+            .locator(
+              `a#thumbnail[href*="watch?v=${videoId}"], a#video-title[href*="watch?v=${videoId}"], a[href*="watch?v=${videoId}"]`
+            )
+            .first();
+          const n = await exact.count().catch(() => 0);
+          if (n > 0) {
+            console.log(`[VIEWS] ${profileName} found OUR video in search → click`);
+            await exact.click({ timeout: 10000 }).catch(() => {});
+            await sleep(2000 + Math.floor(Math.random() * 1200));
+            const cur = page.url() || '';
+            if (cur.includes(videoId) || /\/shorts\//i.test(cur)) {
+              openedOurVideo = true;
+            }
+          } else {
+            console.log(
+              `[VIEWS] ${profileName} OUR videoId not in search results → will direct open`
+            );
+          }
+        } catch (e) {
+          console.warn(`[VIEWS] ${profileName} exact-match click fail:`, e.message);
+        }
+      }
+
+      // ----- 3) If we did NOT land on our video → direct goto (never keep wrong video) -----
+      if (!openedOurVideo) {
+        const cur = page.url() || '';
+        if (videoId && cur.includes(videoId)) {
+          openedOurVideo = true;
+        } else {
+          console.log(`[VIEWS] ${profileName} direct open our link (no wrong video)`);
+          await page.goto(target, {
+            waitUntil: 'domcontentloaded',
+            timeout: navTimeout(),
+          });
+          await sleep(1600 + Math.floor(Math.random() * 1200));
+        }
+      }
+    } else {
+      // No title – direct only
+      console.log(`[VIEWS] ${profileName} no title → direct open`);
+      await page.goto(target, {
+        waitUntil: 'domcontentloaded',
+        timeout: navTimeout(),
+      });
+      await sleep(1600 + Math.floor(Math.random() * 1200));
+    }
+
+    // ----- 4) Final safety: must be on our videoId -----
+    if (videoId) {
+      const landed = page.url() || '';
+      if (!landed.includes(videoId) && !/\/shorts\//i.test(landed)) {
+        console.warn(
+          `[VIEWS] ${profileName} still not on our video → force watch?v=${videoId}`
+        );
+        await page.goto(`https://www.youtube.com/watch?v=${videoId}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout(),
+        });
+        await sleep(1500 + Math.floor(Math.random() * 900));
+      }
+    }
+
+    await this._dismissBanners(page).catch(() => {});
+    await sleep(700 + Math.floor(Math.random() * 600));
+  }
+
+  /**
+   * CHANGE (2026-11): After warm-up, open the EXACT order video URL directly (no title search).
+   * Search-by-name often opened the wrong video; this always hits the link we were given.
+   * Still human-like / smooth: short home pause → light scroll → goto watch URL → settle.
+   */
+  async _openTargetVideoDirectSmooth(page, profileName, videoUrl, videoId) {
+    const target =
+      videoUrl ||
+      (videoId ? `https://www.youtube.com/watch?v=${videoId}` : null);
+    if (!target) {
+      throw new Error('No videoUrl / videoId to open');
+    }
+
+    console.log(`[VIEWS] ${profileName} direct open (no search): ${target.slice(0, 80)}`);
+
+    // 1) Soft land on YouTube home (or stay if already on YT) – looks less robotic than cold goto
+    try {
+      const cur = page.url() || '';
+      if (!/youtube\.com/i.test(cur)) {
+        await page.goto('https://www.youtube.com/', {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout(),
+        });
+      } else if (!/youtube\.com\/?$/i.test(cur) && !/youtube\.com\/\?/i.test(cur)) {
+        // Come back to home briefly after warm-up watch
+        await page.goto('https://www.youtube.com/', {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout(),
+        });
+      }
+    } catch (_) {
+      await page.goto('https://www.youtube.com/', {
+        waitUntil: 'domcontentloaded',
+        timeout: navTimeout(),
+      }).catch(() => {});
+    }
+
+    await sleep(1200 + Math.floor(Math.random() * 1800));
+    await this._dismissBanners(page).catch(() => {});
+
+    // 2) Light human scroll on home
+    try {
+      await page.evaluate(() => window.scrollBy(0, 120 + Math.floor(Math.random() * 280)));
+    } catch (_) {}
+    await sleep(600 + Math.floor(Math.random() * 900));
+
+    // 3) Direct navigation to the order link (exact video)
+    await page.goto(target, {
+      waitUntil: 'domcontentloaded',
+      timeout: navTimeout(),
+    });
+    await sleep(1800 + Math.floor(Math.random() * 1600));
+    await this._dismissBanners(page).catch(() => {});
+
+    // 4) Verify we landed on the right video; one retry if URL drifted
+    if (videoId) {
+      const landed = page.url() || '';
+      if (!landed.includes(videoId) && !/\/shorts\//i.test(landed)) {
+        console.warn(
+          `[VIEWS] ${profileName} URL mismatch after goto → retry direct watch?v=${videoId}`
+        );
+        await page.goto(`https://www.youtube.com/watch?v=${videoId}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout(),
+        });
+        await sleep(1500 + Math.floor(Math.random() * 1000));
+        await this._dismissBanners(page).catch(() => {});
+      }
+    }
+
+    // 5) Short settle before play (smooth)
+    await sleep(800 + Math.floor(Math.random() * 700));
+  }
+
+
+  /**
+   * CHANGE: Read visible video title from watch page.
+   */
+  async _readVideoTitleFromPage(page) {
+    try {
+      const t = await page.evaluate(() => {
+        const el =
+          document.querySelector('h1.ytd-watch-metadata yt-formatted-string') ||
+          document.querySelector('h1 yt-formatted-string') ||
+          document.querySelector('h1.title') ||
+          document.querySelector('meta[name="title"]') ||
+          document.querySelector('meta[property="og:title"]');
+        if (!el) return '';
+        if (el.getAttribute && el.getAttribute('content')) return el.getAttribute('content');
+        return (el.textContent || '').trim();
+      });
+      return (t || '').replace(/\s+/g, ' ').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /**
+   * CHANGE: Search box open → type title → results → click a RANDOM video
+   * (prefer NOT our videoId so it is a different video).
+   */
+  async _searchTitleAndOpenRandomVideo(page, profileName, title, ourVideoId) {
+    const q = (title || ourVideoId || 'youtube').trim();
+    // Prefer using the search box UI; fallback to results URL
+    try {
+      await page.goto('https://www.youtube.com/', {
+        waitUntil: 'domcontentloaded',
+        timeout: navTimeout(),
+      });
+      await sleep(1000 + Math.floor(Math.random() * 800));
+      await this._dismissBanners(page).catch(() => {});
+
+      const box = page.locator('input#search, input[name="search_query"]').first();
+      if (await box.count().catch(() => 0)) {
+        await box.click({ timeout: 5000 }).catch(() => {});
+        await sleep(300 + Math.floor(Math.random() * 400));
+        await box.fill('');
+        // Type with small delays (human)
+        for (const ch of q.slice(0, 80)) {
+          await page.keyboard.type(ch, { delay: 40 + Math.floor(Math.random() * 70) });
+        }
+        await sleep(400 + Math.floor(Math.random() * 500));
+        await page.keyboard.press('Enter');
+      } else {
+        await page.goto(
+          `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+          { waitUntil: 'domcontentloaded', timeout: navTimeout() }
+        );
+      }
+    } catch (_) {
+      await page.goto(
+        `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+        { waitUntil: 'domcontentloaded', timeout: navTimeout() }
+      );
+    }
+
+    await sleep(2000 + Math.floor(Math.random() * 1500));
+    await this._dismissBanners(page).catch(() => {});
+    try {
+      await page.evaluate(() => window.scrollBy(0, 100 + Math.floor(Math.random() * 250)));
+    } catch (_) {}
+    await sleep(500);
+
+    await this._clickRandomSearchResult(page, profileName, ourVideoId);
+  }
+
+  /**
+   * Click a random search result thumbnail. Prefer links that are NOT our videoId.
+   */
+  async _clickRandomSearchResult(page, profileName, ourVideoId) {
+    try {
+      const hrefs = await page.evaluate((skipId) => {
+        const nodes = Array.from(
+          document.querySelectorAll(
+            'ytd-video-renderer a#thumbnail[href*="watch"], ytd-video-renderer a#video-title[href*="watch"], ytd-rich-item-renderer a#thumbnail[href*="watch"]'
+          )
+        );
+        const out = [];
+        for (const a of nodes) {
+          const href = a.getAttribute('href') || '';
+          if (!href.includes('watch')) continue;
+          if (skipId && href.includes(skipId)) continue; // skip our video
+          out.push(href);
+        }
+        return out.slice(0, 20);
+      }, ourVideoId || '');
+
+      let list = hrefs || [];
+      // If all were our video / empty, take any watch link
+      if (!list.length) {
+        list = await page.evaluate(() => {
+          const nodes = Array.from(
+            document.querySelectorAll('a#thumbnail[href*="watch"], a#video-title[href*="watch"]')
+          );
+          return nodes.map((a) => a.getAttribute('href') || '').filter((h) => h.includes('watch')).slice(0, 15);
+        });
+      }
+
+      if (!list.length) {
+        console.warn(`[VIEWS] ${profileName} no search results to click`);
+        return false;
+      }
+
+      const pick = list[Math.floor(Math.random() * list.length)];
+      const abs = pick.startsWith('http') ? pick : `https://www.youtube.com${pick}`;
+      console.log(`[VIEWS] ${profileName} random result → ${abs.slice(0, 90)}`);
+      await page.goto(abs, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+      await sleep(1800 + Math.floor(Math.random() * 1200));
+      await this._dismissBanners(page).catch(() => {});
+      return true;
+    } catch (e) {
+      console.warn(`[VIEWS] ${profileName} random result fail:`, e.message);
+      return false;
+    }
+  }
+
+  /**
+   * After main watch: open another random (related or search) video.
+   */
+  async _openRandomRelatedOrSearchVideo(page, profileName, title, ourVideoId) {
+    // Try related / sidebar on current page first
+    try {
+      const related = await page.evaluate((skipId) => {
+        const nodes = Array.from(
+          document.querySelectorAll(
+            'ytd-compact-video-renderer a#thumbnail[href*="watch"], ytd-watch-next-secondary-results-renderer a[href*="watch"]'
+          )
+        );
+        const hrefs = [];
+        for (const a of nodes) {
+          const href = a.getAttribute('href') || '';
+          if (!href.includes('watch')) continue;
+          if (skipId && href.includes(skipId)) continue;
+          hrefs.push(href);
+        }
+        return hrefs.slice(0, 12);
+      }, ourVideoId || '');
+
+      if (related && related.length) {
+        const pick = related[Math.floor(Math.random() * related.length)];
+        const abs = pick.startsWith('http') ? pick : `https://www.youtube.com${pick}`;
+        console.log(`[VIEWS] ${profileName} related random → ${abs.slice(0, 90)}`);
+        await page.goto(abs, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+        await sleep(1500 + Math.floor(Math.random() * 1000));
+        await this._dismissBanners(page).catch(() => {});
+        return true;
+      }
+    } catch (_) {}
+
+    // Fallback: search title again and pick random
+    await this._searchTitleAndOpenRandomVideo(page, profileName, title, ourVideoId);
+    return true;
+  }
+
+  /**
+   * Watch for fixed seconds with mouse move + light scroll (video keeps playing).
+   */
+  async _watchForSecondsWithActivity(page, profileName, seconds) {
+    const sec = Math.max(1, parseInt(seconds, 10) || 10);
+    console.log(`[VIEWS] ${profileName} activity-watch ${sec}s`);
+    // Ensure playing
+    try {
+      await page.evaluate(async () => {
+        const video =
+          document.querySelector('video') || document.querySelector('#movie_player video');
+        if (!video) return;
+        video.muted = true;
+        try {
+          await video.play();
+        } catch (_) {
+          const p = document.querySelector('#movie_player');
+          if (p) p.click();
+        }
+      });
+    } catch (_) {}
+
+    const endAt = Date.now() + sec * 1000;
+    while (Date.now() < endAt) {
+      try {
+        const box = await page.evaluate(() => {
+          const v =
+            document.querySelector('#movie_player') ||
+            document.querySelector('video') ||
+            document.body;
+          const r = v.getBoundingClientRect();
+          return {
+            x: r.left,
+            y: r.top,
+            w: Math.max(r.width, 200),
+            h: Math.max(r.height, 200),
+          };
+        });
+        await page.mouse.move(
+          box.x + Math.random() * box.w,
+          box.y + Math.random() * box.h,
+          { steps: 4 + Math.floor(Math.random() * 10) }
+        );
+      } catch (_) {}
+      try {
+        if (Math.random() > 0.45) {
+          await page.evaluate(() => window.scrollBy(0, 80 + Math.floor(Math.random() * 220)));
+        }
+      } catch (_) {}
+      // keep video playing
+      try {
+        await page.evaluate(() => {
+          const video =
+            document.querySelector('video') || document.querySelector('#movie_player video');
+          if (video && video.paused) video.play().catch(() => {});
+        });
+      } catch (_) {}
+      await sleep(800 + Math.floor(Math.random() * 700));
+    }
+  }
+
+  /**
+   * Full guest view session with persistent profile.
+   *
+   * CHANGE (2026-11) – human-like multi-step flow:
+   *  1) Open our video URL → read title
+   *  2) Search that title → open a RANDOM other video → watch 40s
+   *  3) Close it → open OUR video URL again
+   *  4) Watch our video for configured time (cursor move + page scroll, video stays playing)
+   *  5) Open another random video → watch 10s → close
+   *  6) YouTube home/page scroll ~5s
+   */
+  async _performGuestView(videoUrl, { profileName, videoId, videoTitle }) {
     const result = {
-      botName: sessionId,
-      browser: browserKind,
+      botName: profileName,
       success: false,
       viewed: false,
       watchedSeconds: 0,
       error: null,
+      profile: profileName,
     };
 
-    let browser;
-    let page;
-
+    let context;
     try {
-      const launched = await this._launchAnonymousViewBrowser(sessionId, browserKind);
-      browser = launched.browser;
-      page = launched.page;
-      result.browser = launched.browserKind || browserKind;
+      if (videoId && isViewProfileOnCooldown(profileName, videoId)) {
+        throw new Error(`Profile ${profileName} on 48h cooldown for video ${videoId}`);
+      }
 
-      console.log(`[VIEWS] ${sessionId} → open video (no login) via ${result.browser}`);
+      const launched = await this._launchGuestViewProfile(profileName);
+      context = launched.context;
+      const page = launched.page;
 
-      await page.goto(videoUrl, {
-        waitUntil: 'domcontentloaded',
-        timeout: navTimeout(),
-      });
+      // Optional one-time warm-up (first profile use)
+      await this._warmUpGuestProfile(page, profileName);
 
-      const postLoadWait = 2000 + Math.floor(Math.random() * 2001);
-      await sleep(postLoadWait);
-      await this._dismissBanners(page);
+      const targetUrl =
+        videoUrl ||
+        (videoId ? `https://www.youtube.com/watch?v=${videoId}` : null);
+      if (!targetUrl) throw new Error('No videoUrl / videoId');
+
+      // ========== 1) Open OUR video first → copy title ==========
+      console.log(`[VIEWS] ${profileName} step1 open our URL`);
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+      await sleep(2000 + Math.floor(Math.random() * 1500));
+      await this._dismissBanners(page).catch(() => {});
+
+      let title = (videoTitle || '').trim();
+      if (!title) {
+        title = await this._readVideoTitleFromPage(page);
+      }
+      if (!title && videoId) title = videoId;
+      console.log(`[VIEWS] ${profileName} title: "${(title || '').slice(0, 80)}"`);
+
+      // ========== 2) Search title → open RANDOM video → watch 40s ==========
+      console.log(`[VIEWS] ${profileName} step2 search title → random video 40s`);
+      await this._searchTitleAndOpenRandomVideo(page, profileName, title, videoId);
+      await this._humanStartVideo(page, profileName).catch(() => {});
+      await this._watchForSecondsWithActivity(page, profileName, 40);
+
+      // ========== 3) Back to OUR video URL ==========
+      console.log(`[VIEWS] ${profileName} step3 open our URL again`);
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+      await sleep(1800 + Math.floor(Math.random() * 1200));
+      await this._dismissBanners(page).catch(() => {});
+
+      // Safety: must be on our videoId
+      if (videoId) {
+        const landed = page.url() || '';
+        if (!landed.includes(videoId)) {
+          await page.goto(`https://www.youtube.com/watch?v=${videoId}`, {
+            waitUntil: 'domcontentloaded',
+            timeout: navTimeout(),
+          });
+          await sleep(1500);
+          await this._dismissBanners(page).catch(() => {});
+        }
+      }
 
       await page
         .waitForSelector('video, ytd-player, #movie_player', { timeout: actionTimeout() })
         .catch(() => {});
+      await this._humanStartVideo(page, profileName);
 
-      // Human-like start playback
-      await this._humanStartVideo(page, sessionId);
-
-      // Extended watch (view mode)
-      const watchSec = await this._watchVideo(page, sessionId, {
+      // ========== 4) Watch OUR video (configured time) + cursor + scroll ==========
+      console.log(`[VIEWS] ${profileName} step4 watch our video (cursor + scroll)`);
+      const watchSec = await this._watchVideo(page, profileName, {
         viewOnly: true,
         watchHours: false,
+        // keep page activity – _watchVideo already moves mouse; extra scroll below
       });
       result.watchedSeconds = watchSec;
       result.viewed = true;
       result.success = true;
 
+      // ========== 5) Another random video → 10s ==========
+      console.log(`[VIEWS] ${profileName} step5 random video 10s`);
+      try {
+        await this._openRandomRelatedOrSearchVideo(page, profileName, title, videoId);
+        await this._humanStartVideo(page, profileName).catch(() => {});
+        await this._watchForSecondsWithActivity(page, profileName, 10);
+      } catch (e) {
+        console.warn(`[VIEWS] ${profileName} step5 random 10s skip:`, e.message);
+      }
+
+      // ========== 6) YouTube page scroll ~5s ==========
+      console.log(`[VIEWS] ${profileName} step6 youtube scroll 5s`);
+      try {
+        await page.goto('https://www.youtube.com/', {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout(),
+        });
+        await this._dismissBanners(page).catch(() => {});
+        const scrollEnd = Date.now() + 5000;
+        while (Date.now() < scrollEnd) {
+          await page
+            .evaluate(() => window.scrollBy(0, 180 + Math.floor(Math.random() * 320)))
+            .catch(() => {});
+          await sleep(700 + Math.floor(Math.random() * 600));
+          try {
+            const vw = await page.evaluate(() => ({
+              w: window.innerWidth,
+              h: window.innerHeight,
+            }));
+            await page.mouse.move(
+              80 + Math.random() * (vw.w - 160),
+              80 + Math.random() * (vw.h - 160),
+              { steps: 4 + Math.floor(Math.random() * 8) }
+            );
+          } catch (_) {}
+        }
+      } catch (e) {
+        console.warn(`[VIEWS] ${profileName} step6 scroll skip:`, e.message);
+      }
+
+      if (videoId) markViewProfileWatched(profileName, videoId);
+
+      // Save cookies + cooldown + stats to ViewBot collection (before close)
+      try {
+        const cookies = normalizeCookies((await context.cookies()) || []);
+        const cooldownPatch = {};
+        if (videoId) {
+          cooldownPatch[`videoCooldown.${videoId}`] = new Date();
+        }
+        await ViewBot.findOneAndUpdate(
+          { profileName },
+          {
+            $set: {
+              cookies,
+              cookieCount: cookies.length,
+              lastVideoId: videoId || '',
+              lastWatchedAt: new Date(),
+              updatedAt: new Date(),
+              ...cooldownPatch,
+            },
+            $inc: { totalViews: 1 },
+            $setOnInsert: { createdAt: new Date() },
+          },
+          { upsert: true }
+        );
+        console.log(
+          `[VIEWS] ${profileName} DB ok | cookies=${cookies.length} totalViews++ video=${videoId || '-'}`
+        );
+      } catch (dbErr) {
+        console.warn(`[VIEWS] ${profileName} DB save after watch:`, dbErr.message);
+      }
+
       console.log(
-        `[VIEWS] ${sessionId} ✅ watched ${watchSec}s via ${result.browser} (no login)`
+        `[VIEWS] ${profileName} ✅ watched ${watchSec}s our video + human session (guest persistent)`
       );
     } catch (err) {
       result.error = err.message || String(err);
-      console.error(`[VIEWS] ${sessionId} failed:`, result.error);
+      console.error(`[VIEWS] ${profileName} failed:`, result.error);
     } finally {
-      if (browser) {
-        await browser.close().catch(() => {});
+      // Close browser context – profile folder + cookies STAY on disk
+      if (context) {
+        await context.close().catch(() => {});
       }
     }
 
