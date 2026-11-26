@@ -23,7 +23,18 @@ const syncOrdersStatus = async (inputOrders = null) => {
       return { syncedCount: 0, updatedCount: 0 };
     }
 
-    console.log(`[Order Sync] Processing ${activeOrders.length} pending/in-progress orders...`);
+    // Avoid spam: only log when count changes or every ~10th run
+    if (!syncOrdersStatus._lastLoggedCount || syncOrdersStatus._lastLoggedCount !== activeOrders.length) {
+      console.log(`[Order Sync] Processing ${activeOrders.length} pending/in-progress orders...`);
+      syncOrdersStatus._lastLoggedCount = activeOrders.length;
+      syncOrdersStatus._logSkip = 0;
+    } else {
+      syncOrdersStatus._logSkip = (syncOrdersStatus._logSkip || 0) + 1;
+      if (syncOrdersStatus._logSkip >= 15) {
+        console.log(`[Order Sync] still ${activeOrders.length} in progress…`);
+        syncOrdersStatus._logSkip = 0;
+      }
+    }
 
     // Group active orders by ApiProvider
     const providerGroups = {};

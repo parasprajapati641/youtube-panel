@@ -155,6 +155,29 @@ function vmwareArgs() {
     console.log('[VM] single-process disabled');
   }
 
+  // Visible browser (HEADLESS=false): remove flags that cause BLACK SCREEN
+  const headed =
+    process.env.HEADLESS === 'false' ||
+    process.env.HEADED === 'true' ||
+    process.env.VISIBLE_BROWSER === 'true';
+  if (headed) {
+    const kill = new Set([
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--single-process',
+      '--in-process-gpu',
+      '--no-zygote',
+      '--renderer-process-limit=1',
+      '--mute-audio',
+    ]);
+    const filtered = args.filter((a) => !kill.has(a) && !String(a).startsWith('--js-flags='));
+    // Use GPU / ANGLE so window paints
+    filtered.push('--use-gl=angle');
+    filtered.push('--enable-gpu-rasterization');
+    console.log('[VM] HEADED mode – removed black-screen flags (gpu on)');
+    return { isVm, lowMem: false, width, height, args: filtered };
+  }
+
   return { isVm, lowMem, width, height, args };
 }
 

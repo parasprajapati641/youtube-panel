@@ -603,12 +603,102 @@ function fingerprintInitScript(/* fp ignored – data comes from 2nd arg */) {
   return (fpData) => {
     if (!fpData) return;
 
-    // ---- webdriver ----
+    // ---- webdriver: MUST be false before any page JS (human Chrome returns false/undefined) ----
     try {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      if (Object.getOwnPropertyDescriptor(navigator, 'webdriver')) {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+          configurable: true,
+        });
+      } else {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+          configurable: true,
+        });
+      }
+    } catch (_) {}
+    try {
+      // Prototype chain (Playwright sometimes sets on prototype)
+      const proto = Object.getPrototypeOf(navigator);
+      if (proto) {
+        Object.defineProperty(proto, 'webdriver', {
+          get: () => false,
+          configurable: true,
+        });
+      }
+    } catch (_) {}
+    try {
+      delete Navigator.prototype.webdriver;
+    } catch (_) {}
+    try {
+      Object.defineProperty(Navigator.prototype, 'webdriver', {
+        get: () => false,
+        configurable: true,
+      });
     } catch (_) {}
 
-    window.chrome = window.chrome || { runtime: {}, loadTimes: function () {}, csi: function () {}, app: {} };
+    // ---- chrome runtime (missing = automation flag) ----
+    try {
+      window.chrome = window.chrome || {};
+      window.chrome.runtime = window.chrome.runtime || {
+        connect: function () {},
+        sendMessage: function () {},
+        id: undefined,
+      };
+      window.chrome.loadTimes = window.chrome.loadTimes || function () {
+        return {
+          commitLoadTime: Date.now() / 1000 - 1,
+          finishDocumentLoadTime: Date.now() / 1000 - 0.5,
+          finishLoadTime: Date.now() / 1000 - 0.3,
+          firstPaintAfterLoadTime: 0,
+          firstPaintTime: Date.now() / 1000 - 0.8,
+          navigationType: 'Other',
+          npnNegotiatedProtocol: 'h2',
+          requestTime: Date.now() / 1000 - 2,
+          startLoadTime: Date.now() / 1000 - 2,
+          wasAlternateProtocolAvailable: false,
+          wasFetchedViaSpdy: true,
+          wasNpnNegotiated: true,
+        };
+      };
+      window.chrome.csi = window.chrome.csi || function () {
+        return { pageT: Date.now(), startE: Date.now() - 300, onloadT: Date.now() - 100 };
+      };
+      window.chrome.app = window.chrome.app || { isInstalled: false, getDetails: function () {}, getIsInstalled: function () { return false; } };
+    } catch (_) {}
+
+    // ---- permissions.query (notifications) – automation often fails this ----
+    try {
+      const origQuery = window.Permissions && Permissions.prototype.query;
+      if (origQuery) {
+        Permissions.prototype.query = function (params) {
+          if (params && params.name === 'notifications') {
+            return Promise.resolve({ state: Notification.permission || 'default', onchange: null });
+          }
+          return origQuery.call(this, params);
+        };
+      }
+    } catch (_) {}
+
+    // ---- plugins / mimeTypes length (headless often 0) ----
+    try {
+      if (!navigator.plugins || navigator.plugins.length === 0) {
+        const pluginData = [
+          { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+          { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+          { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+        ];
+        const fakePlugins = pluginData.map((p) => {
+          const plug = { name: p.name, filename: p.filename, description: p.description, length: 1 };
+          plug.item = () => plug;
+          return plug;
+        });
+        fakePlugins.item = (i) => fakePlugins[i] || null;
+        fakePlugins.namedItem = (n) => fakePlugins.find((x) => x.name === n) || null;
+        fakePlugins.refresh = () => {};
+        Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins, configurable: true });
+      }
+    } catch (_) {}
 
     // ---- languages ----
     try {

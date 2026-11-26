@@ -640,6 +640,105 @@ class BotService {
     } catch (_) {}
   }
 
+  /**
+   * Detect YouTube ads and click Skip / close when available.
+   * Call this often during watch loops so ads don't eat watch time
+   * and the main video keeps playing.
+   * Returns true if an ad was skipped or closed.
+   */
+  async _skipAdsIfPresent(page, botName = '') {
+    try {
+      const skipped = await page.evaluate(() => {
+        const tryClick = (el) => {
+          if (!el) return false;
+          try {
+            el.click();
+            return true;
+          } catch (_) {
+            try {
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              return true;
+            } catch (__) {
+              return false;
+            }
+          }
+        };
+
+        // Modern + classic skip buttons
+        const skipSelectors = [
+          '.ytp-ad-skip-button',
+          '.ytp-ad-skip-button-modern',
+          '.ytp-skip-ad-button',
+          'button.ytp-ad-skip-button-modern',
+          '.ytp-ad-skip-button-container button',
+          '[class*="ytp-ad-skip"] button',
+          'button[class*="skip"]',
+          '.ytp-ad-overlay-close-button',
+          '.ytp-ad-overlay-close-container button',
+          'button.ytp-ad-overlay-close-button',
+        ];
+
+        for (const sel of skipSelectors) {
+          const el = document.querySelector(sel);
+          if (el && el.offsetParent !== null) {
+            if (tryClick(el)) return 'skip-btn';
+          }
+        }
+
+        // Text-based fallback (Skip / Skip Ad / Skip Ads)
+        const buttons = [...document.querySelectorAll('button, .ytp-button, a')];
+        for (const b of buttons) {
+          const t = (b.textContent || b.getAttribute('aria-label') || '').trim().toLowerCase();
+          if (
+            (t === 'skip' || t === 'skip ad' || t === 'skip ads' || t.startsWith('skip')) &&
+            b.offsetParent !== null
+          ) {
+            if (tryClick(b)) return 'skip-text';
+          }
+        }
+
+        // Close overlay ads
+        const closeSelectors = [
+          '.ytp-ad-overlay-close-button',
+          '.ytp-ad-overlay-close-container',
+          'button[aria-label*="Close"]',
+          'button[aria-label*="close"]',
+        ];
+        for (const sel of closeSelectors) {
+          const el = document.querySelector(sel);
+          if (el && el.offsetParent !== null) {
+            if (tryClick(el)) return 'close-overlay';
+          }
+        }
+
+        // If ad is showing but no skip yet, at least keep main player ready
+        const adShowing =
+          document.querySelector('.ad-showing') ||
+          document.querySelector('.ytp-ad-player-overlay') ||
+          document.querySelector('.ytp-ad-module') ||
+          document.querySelector('[class*="ad-showing"]');
+        if (adShowing) return 'ad-present';
+
+        return false;
+      });
+
+      if (skipped && skipped !== 'ad-present') {
+        if (botName) console.log(`[${botName}] Ad skipped (${skipped})`);
+        await sleep(400 + Math.floor(Math.random() * 600));
+        // After skip, force main video to resume if needed
+        await page.evaluate(() => {
+          const video =
+            document.querySelector('video') || document.querySelector('#movie_player video');
+          if (video && video.paused) video.play().catch(() => {});
+        }).catch(() => {});
+        return true;
+      }
+      return !!skipped;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ============================================================================
   // BOT REGISTER / LOGIN
   // ----------------------------------------------------------------------------
@@ -1410,6 +1509,7 @@ class BotService {
       const postLoadWait = 2000 + Math.floor(Math.random() * 2001); // 2–4 s
       await sleep(postLoadWait);
       await this._dismissBanners(page);
+      await this._skipAdsIfPresent(page, botData.botName);
 
       if (!(await this._isLoggedIn(page))) {
         throw new Error('Logged out on video page. Run /refresh/' + botData.botName);
@@ -1421,6 +1521,7 @@ class BotService {
 
       // Human-like: random scroll + smooth mouse move toward play button, then start video
       await this._humanStartVideo(page, botData.botName);
+      await this._skipAdsIfPresent(page, botData.botName);
 
       // Views / Watch-hours: longer watch; likes/comments: WATCH_TIME_*
       const watchSec = await this._watchVideo(page, botData.botName, {
@@ -1485,49 +1586,111 @@ class BotService {
   }
 
   async _watchVideo(page, botName, opts = {}) {
-    // Audio-only watch: muted + video hidden + lowest quality (saves CPU/RAM)
-    // Likes/comments: WATCH_TIME_MIN/MAX (default 120–240s)
-    // Views: VIEW_WATCH_TIME_MIN/MAX (default 180–360s)
-    // Watch hours: 80–90% of actual video length (WATCH_HOUR_PCT_MIN/MAX)
+    // VIEW / WATCH-HOURS: visible player in viewport – required for YouTube to count views.
+    // LIKE / COMMENT: can mute + lower quality to save CPU (not used for view counting).
+    //
+    // Durations:
+    //   Views: VIEW_WATCH_TIME_MIN/MAX (default 60–180s) – prefer >=30s real play
+    //   Watch hours: 80–90% of video length
+    //   Likes/comments: WATCH_TIME_MIN/MAX (default 120–240s)
     const watchHours = !!opts.watchHours;
     const viewOnly = !!opts.viewOnly;
+    const countAsView = viewOnly || watchHours;
     let sec;
     let modeTag = '';
 
-    // Start playback first so duration is available
+    // ---- Start playback (VISIBLE for views) ----
     try {
-      await page.evaluate(async () => {
+      await page.evaluate(async (asView) => {
         const video =
           document.querySelector('video') || document.querySelector('#movie_player video');
         if (!video) return;
 
-        video.muted = true;
-        video.style.opacity = '0';
-        video.style.pointerEvents = 'none';
-        video.style.position = 'fixed';
-        video.style.left = '-9999px';
+        const player = document.querySelector('#movie_player');
 
-        try {
-          const player = document.querySelector('#movie_player');
-          if (player && player.setPlaybackQualityRange) {
-            player.setPlaybackQualityRange('tiny', 'tiny');
-          }
-          if (player && player.setPlaybackQuality) {
-            player.setPlaybackQuality('tiny');
-          }
-        } catch (_) {}
+        if (asView) {
+          // Real view: keep player visible in normal layout
+          video.muted = false;
+          try {
+            video.volume = 0.15 + Math.random() * 0.25; // low but not silent
+          } catch (_) {}
+          video.style.opacity = '';
+          video.style.pointerEvents = '';
+          video.style.position = '';
+          video.style.left = '';
+          try {
+            if (player) {
+              player.style.opacity = '';
+              player.scrollIntoView({ block: 'center', behavior: 'instant' });
+            }
+          } catch (_) {}
+          // Prefer small but real quality (not "tiny" which often does not count)
+          try {
+            if (player && player.setPlaybackQualityRange) {
+              player.setPlaybackQualityRange('small', 'medium');
+            }
+            if (player && player.setPlaybackQuality) {
+              player.setPlaybackQuality('small');
+            }
+          } catch (_) {}
+        } else {
+          // Likes/comments only – save resources
+          video.muted = true;
+          try {
+            if (player && player.setPlaybackQualityRange) {
+              player.setPlaybackQualityRange('tiny', 'small');
+            }
+            if (player && player.setPlaybackQuality) {
+              player.setPlaybackQuality('tiny');
+            }
+          } catch (_) {}
+        }
 
         try {
           await video.play();
         } catch (_) {
-          const player = document.querySelector('#movie_player') || video;
           if (player) player.click();
+          else video.click();
         }
-      });
+      }, countAsView);
     } catch (_) {}
 
+    // Confirm actually playing (views)
+    if (countAsView) {
+      try {
+        await page.waitForFunction(
+          () => {
+            const v =
+              document.querySelector('video') ||
+              document.querySelector('#movie_player video');
+            return v && !v.paused && v.readyState >= 2;
+          },
+          { timeout: 15000 }
+        );
+      } catch (_) {
+        // retry play
+        await page.evaluate(() => {
+          const v =
+            document.querySelector('video') ||
+            document.querySelector('#movie_player video');
+          const p = document.querySelector('#movie_player');
+          if (v) {
+            v.muted = false;
+            v.play().catch(() => {});
+          }
+          if (p) p.click();
+        }).catch(() => {});
+        await sleep(1500);
+      }
+    }
+
+    // First ad check right after play starts
+    try {
+      await this._skipAdsIfPresent(page, botName);
+    } catch (_) {}
+
+    // ---- Duration ----
     if (watchHours) {
-      // Wait until duration is known (metadata loaded)
       let videoDuration = 0;
       for (let i = 0; i < 15; i++) {
         try {
@@ -1545,39 +1708,61 @@ class BotService {
         await sleep(800);
       }
 
+      // Prefer near-full watch for watch-hours (user wants "puro time")
       const pctMin = Math.min(
         99,
-        Math.max(50, parseInt(process.env.WATCH_HOUR_PCT_MIN || '80', 10))
+        Math.max(70, parseInt(process.env.WATCH_HOUR_PCT_MIN || '90', 10))
       );
       const pctMax = Math.min(
         100,
-        Math.max(pctMin, parseInt(process.env.WATCH_HOUR_PCT_MAX || '90', 10))
+        Math.max(pctMin, parseInt(process.env.WATCH_HOUR_PCT_MAX || '98', 10))
       );
       const pct = pctMin + Math.random() * (pctMax - pctMin);
 
       if (videoDuration >= 10) {
         sec = Math.max(30, Math.floor((videoDuration * pct) / 100));
-        // Optional hard cap (0 = no cap). Prevents multi-hour stuck sessions.
         const cap = parseInt(process.env.WATCH_HOUR_TIME_MAX || '0', 10);
         if (cap > 0 && sec > cap) sec = cap;
-        modeTag = ` [WATCH HOURS – ${pct.toFixed(0)}% of ${Math.round(videoDuration)}s video]`;
+        modeTag = ` [WATCH HOURS – ${pct.toFixed(0)}% of ${Math.round(videoDuration)}s]`;
       } else {
-        // Fallback if duration not readable
         const minSec = parseInt(process.env.WATCH_HOUR_TIME_MIN || '1800', 10);
         const maxSec = parseInt(process.env.WATCH_HOUR_TIME_MAX || '3600', 10);
         const lo = Math.min(minSec, maxSec);
         const hi = Math.max(minSec, maxSec);
         sec = lo + Math.floor(Math.random() * (hi - lo + 1));
-        modeTag = ' [WATCH HOURS – duration unknown, fallback timer]';
-        console.warn(`[${botName}] Video duration not found – using fallback ${sec}s`);
+        modeTag = ' [WATCH HOURS – duration unknown]';
       }
     } else if (viewOnly) {
-      const minSec = parseInt(process.env.VIEW_WATCH_TIME_MIN || process.env.WATCH_TIME_MIN || '180', 10);
-      const maxSec = parseInt(process.env.VIEW_WATCH_TIME_MAX || process.env.WATCH_TIME_MAX || '360', 10);
+      // Real views need enough continuous play time (YT often needs ~30s+)
+      const minSec = parseInt(process.env.VIEW_WATCH_TIME_MIN || '60', 10);
+      const maxSec = parseInt(process.env.VIEW_WATCH_TIME_MAX || '180', 10);
       const lo = Math.min(minSec, maxSec);
       const hi = Math.max(minSec, maxSec);
       sec = lo + Math.floor(Math.random() * (hi - lo + 1));
-      modeTag = ' [VIEW mode – extended]';
+      // Also try % of video if known
+      try {
+        const dur = await page.evaluate(() => {
+          const v =
+            document.querySelector('video') || document.querySelector('#movie_player video');
+          const d = v && v.duration;
+          return d && isFinite(d) && d > 0 ? d : 0;
+        });
+        if (dur >= 20) {
+          // Prefer longer real watch (45–85%) so views look more human / "puro time"
+          const pct = 0.45 + Math.random() * 0.40;
+          const byPct = Math.floor(dur * pct);
+          // use the larger of configured timer vs % so short videos still get enough
+          sec = Math.max(sec, Math.min(byPct, Math.floor(dur * 0.95)));
+          // hard ceiling from env max
+          sec = Math.min(sec, hi);
+          sec = Math.max(sec, Math.min(35, Math.floor(dur * 0.55)));
+          modeTag = ` [VIEW visible – ~${Math.round((sec / dur) * 100)}% of ${Math.round(dur)}s]`;
+        } else {
+          modeTag = ' [VIEW visible – timed]';
+        }
+      } catch (_) {
+        modeTag = ' [VIEW visible – timed]';
+      }
     } else {
       const minSec = parseInt(process.env.WATCH_TIME_MIN || '120', 10);
       const maxSec = parseInt(process.env.WATCH_TIME_MAX || '240', 10);
@@ -1588,15 +1773,23 @@ class BotService {
 
     const mins = (sec / 60).toFixed(1);
     console.log(
-      `[${botName}] Watching (audio only) ${sec}s (~${mins} min)` + modeTag + ' ...'
+      `[${botName}] Watching ${countAsView ? 'VISIBLE' : 'audio-lite'} ${sec}s (~${mins} min)` +
+        modeTag +
+        ' ...'
     );
 
     const endAt = Date.now() + sec * 1000;
     let step = 0;
     while (Date.now() < endAt) {
       step++;
+
+      // Skip ads as soon as skip button appears (so main video gets real watch time)
       try {
-        // Mouse move (engagement – like/comment UI still visible)
+        await this._skipAdsIfPresent(page, botName);
+      } catch (_) {}
+
+      // Human-like mouse movement over the player
+      try {
         const box = await page.evaluate(() => {
           const v =
             document.querySelector('#movie_player') ||
@@ -1612,36 +1805,69 @@ class BotService {
         });
         const x = box.x + Math.random() * box.w;
         const y = box.y + Math.random() * box.h;
-        await page.mouse.move(x, y, { steps: 5 + Math.floor(Math.random() * 10) });
+        await page.mouse.move(x, y, { steps: 8 + Math.floor(Math.random() * 14) });
       } catch (_) {}
 
-      // CHANGE: page scroll while video keeps playing (human-like browsing comments area)
+      // Continuous human-like scrolling (smooth, random direction & amount)
       try {
-        if (step % 2 === 0) {
-          await page.evaluate(() => {
-            window.scrollBy(0, 100 + Math.floor(Math.random() * 280));
-          });
-        } else if (step % 5 === 0) {
-          await page.evaluate(() => {
-            window.scrollBy(0, -(60 + Math.floor(Math.random() * 120)));
-          });
+        if (countAsView) {
+          // Keep player mostly in view, but still do natural small scrolls
+          if (step % 3 === 0) {
+            await page.evaluate(() => {
+              const p =
+                document.querySelector('#movie_player') ||
+                document.querySelector('ytd-player');
+              if (p) p.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            });
+          } else if (step % 2 === 0) {
+            const dir = Math.random() > 0.35 ? 1 : -1;
+            const amount = 30 + Math.floor(Math.random() * 90);
+            await page.evaluate(
+              ({ d, a }) => window.scrollBy({ top: d * a, left: 0, behavior: 'smooth' }),
+              { d: dir, a: amount }
+            );
+          }
+        } else {
+          // Like/comment mode: more free scrolling
+          if (step % 2 === 0) {
+            const dir = Math.random() > 0.3 ? 1 : -1;
+            const amount = 80 + Math.floor(Math.random() * 260);
+            await page.evaluate(
+              ({ d, a }) => window.scrollBy({ top: d * a, left: 0, behavior: 'smooth' }),
+              { d: dir, a: amount }
+            );
+          }
         }
       } catch (_) {}
 
+      // Keep playing + ensure still visible/unmuted for views
       try {
-        await page.evaluate(() => {
+        await page.evaluate((asView) => {
           const video =
             document.querySelector('video') || document.querySelector('#movie_player video');
-          if (video && video.paused) video.play().catch(() => {});
-        });
+          if (!video) return;
+          if (asView) {
+            video.muted = false;
+            if (video.style.opacity === '0' || video.style.left === '-9999px') {
+              video.style.opacity = '';
+              video.style.left = '';
+              video.style.position = '';
+              video.style.pointerEvents = '';
+            }
+          }
+          if (video.paused) video.play().catch(() => {});
+        }, countAsView);
       } catch (_) {}
 
       const left = endAt - Date.now();
       if (left <= 0) break;
-      await sleep(Math.min(1500 + Math.floor(Math.random() * 800), left));
+      // Slightly shorter intervals so ad checks + scroll feel continuous
+      await sleep(Math.min(900 + Math.floor(Math.random() * 700), left));
     }
 
-    console.log(`[${botName}] Watch done (${sec}s, mouse+scroll steps=${step})`);
+    console.log(
+      `[${botName}] Watch done (${sec}s, ${countAsView ? 'VISIBLE view' : 'lite'}, steps=${step})`
+    );
     return sec;
   }
 
@@ -1656,16 +1882,22 @@ class BotService {
   async _humanStartVideo(page, botName) {
     console.log(`[${botName}] Human start video (scroll + mouse → play)...`);
 
-    // 1) Small random scrolls (looks around the page)
+    // 1) Small random scrolls (looks around the page – more human-like)
     try {
       await page.evaluate(async () => {
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-        const amount1 = 80 + Math.random() * 180;
-        window.scrollBy({ top: amount1, left: 0, behavior: 'smooth' });
-        await sleep(350 + Math.random() * 450);
-        if (Math.random() > 0.4) {
-          window.scrollBy({ top: -(40 + Math.random() * 100), left: 0, behavior: 'smooth' });
-          await sleep(250 + Math.random() * 350);
+        // First look a bit down
+        window.scrollBy({ top: 60 + Math.random() * 160, left: 0, behavior: 'smooth' });
+        await sleep(280 + Math.random() * 420);
+        // Sometimes scroll further or reverse
+        if (Math.random() > 0.35) {
+          const dir = Math.random() > 0.4 ? 1 : -1;
+          window.scrollBy({
+            top: dir * (50 + Math.random() * 140),
+            left: 0,
+            behavior: 'smooth',
+          });
+          await sleep(250 + Math.random() * 400);
         }
         // Bring player back into view
         const player =
@@ -1674,7 +1906,9 @@ class BotService {
           document.querySelector('video');
         if (player) player.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
-      await sleep(400 + Math.floor(Math.random() * 500));
+      await sleep(350 + Math.floor(Math.random() * 450));
+      // Clear any early ad
+      await this._skipAdsIfPresent(page, botName).catch(() => {});
     } catch (_) {}
 
     // 2) Smooth mouse movement toward the player / big play button
@@ -1722,8 +1956,13 @@ class BotService {
             document.querySelector('video') ||
             document.querySelector('#movie_player video');
           if (video) {
-            video.muted = true;
-            video.play().catch(() => {});
+            // Do not force mute here – view counting needs audible/visible play
+            // (mute only if autoplay policy blocks; browser may mute briefly)
+            try { video.muted = false; video.volume = 0.2; } catch (_) {}
+            video.play().catch(() => {
+              video.muted = true;
+              video.play().catch(() => {});
+            });
           }
           const player = document.querySelector('#movie_player');
           if (player) player.click();
@@ -2737,8 +2976,28 @@ class BotService {
     const userDataDir = profileDir(profileName);
     const isHeadless = process.env.HEADLESS !== 'false';
     const { args: baseArgs, width, height, lowMem } = vmwareArgs();
-    const args = [...baseArgs];
-    if (!isHeadless && !lowMem) args.push('--start-maximized');
+    let args = [...baseArgs];
+    if (!isHeadless) {
+      // Extra safety: strip black-screen flags if still present
+      const kill = new Set([
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--single-process',
+        '--in-process-gpu',
+        '--no-zygote',
+        '--renderer-process-limit=1',
+      ]);
+      args = args.filter((a) => !kill.has(a));
+      if (!args.includes('--start-maximized')) args.push('--start-maximized');
+      console.log('[VIEWS] HEADLESS=false → headed window (no black-screen flags)');
+    }
+    // Anti-automation flags (navigator.webdriver → false via init script)
+    if (!args.includes('--disable-blink-features=AutomationControlled')) {
+      args.push('--disable-blink-features=AutomationControlled');
+    }
+    args.push('--disable-infobars');
+    args.push('--no-default-browser-check');
+    args.push('--no-first-run');
 
     // ----- CHANGE: load existing brand + fingerprint from DB (reuse next time) -----
     let existingDoc = null;
@@ -2856,6 +3115,23 @@ class BotService {
     }
 
     try {
+      // 1) FIRST: force navigator.webdriver = false before any page script
+      await context.addInitScript(() => {
+        try {
+          Object.defineProperty(navigator, 'webdriver', {
+            get: () => false,
+            configurable: true,
+          });
+        } catch (_) {}
+        try {
+          Object.defineProperty(Navigator.prototype, 'webdriver', {
+            get: () => false,
+            configurable: true,
+          });
+        } catch (_) {}
+      });
+
+      // 2) Full human fingerprint (UA, WebGL, canvas, plugins, chrome.*)
       if (typeof fingerprintInitScript === 'function') {
         const script = fingerprintInitScript(fp);
         if (script) {
@@ -2873,6 +3149,15 @@ class BotService {
     } catch (_) {}
 
     const page = context.pages()[0] || (await context.newPage());
+    // Re-apply webdriver=false on this page immediately (belt + suspenders)
+    try {
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
+      });
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false, configurable: true });
+      });
+    } catch (_) {}
     return { context, page, profileName, userDataDir, browserBrand, engine, fingerprint: fp };
   }
 
@@ -2898,24 +3183,51 @@ class BotService {
       await this._dismissBanners(page);
 
       const kw = WARMUP_KEYWORDS[Math.floor(Math.random() * WARMUP_KEYWORDS.length)];
-      const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(kw)}`;
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
-      await sleep(2000 + Math.floor(Math.random() * 2000));
+      // Human-like: click search box and type (not only ?search_query= URL)
+      let typed = false;
+      try {
+        const searchBox = page.locator(
+          'input#search, input[name="search_query"], input[aria-label*="Search" i]'
+        ).first();
+        if (await searchBox.isVisible({ timeout: 4000 }).catch(() => false)) {
+          await searchBox.click({ timeout: 3000 });
+          await sleep(300 + Math.floor(Math.random() * 400));
+          await searchBox.fill('');
+          // type with small gaps like a human
+          for (const ch of kw) {
+            await page.keyboard.type(ch, { delay: 60 + Math.floor(Math.random() * 120) });
+          }
+          await sleep(400 + Math.floor(Math.random() * 500));
+          await page.keyboard.press('Enter');
+          typed = true;
+          await sleep(2200 + Math.floor(Math.random() * 1800));
+        }
+      } catch (_) {}
+      if (!typed) {
+        const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(kw)}`;
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: navTimeout() });
+        await sleep(2000 + Math.floor(Math.random() * 2000));
+      }
       await this._dismissBanners(page);
 
-      // Scroll results
+      // Scroll results slowly (human reading results)
       for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) {
-        await page.evaluate(() => window.scrollBy(0, 400 + Math.floor(Math.random() * 400)));
-        await sleep(800 + Math.floor(Math.random() * 700));
+        await page.evaluate(() => window.scrollBy(0, 180 + Math.floor(Math.random() * 220)));
+        await sleep(900 + Math.floor(Math.random() * 900));
       }
 
-      // Click first/second video thumbnail
+      // Hover then click thumbnail (not instant click)
       const thumbs = page.locator('ytd-video-renderer a#thumbnail, ytd-rich-item-renderer a#thumbnail');
       const n = await thumbs.count().catch(() => 0);
       if (n > 0) {
         const pick = Math.min(n - 1, Math.floor(Math.random() * Math.min(n, 4)));
-        await thumbs.nth(pick).click({ timeout: 8000 }).catch(() => {});
-        await sleep(2500);
+        const th = thumbs.nth(pick);
+        try {
+          await th.hover({ timeout: 4000 });
+          await sleep(250 + Math.floor(Math.random() * 450));
+        } catch (_) {}
+        await th.click({ timeout: 8000 }).catch(() => {});
+        await sleep(2500 + Math.floor(Math.random() * 1200));
         await this._dismissBanners(page);
         await this._humanStartVideo(page, profileName).catch(() => {});
         const warmSec = 20 + Math.floor(Math.random() * 11); // 20–30s
@@ -3149,47 +3461,58 @@ class BotService {
    */
   async _searchTitleAndOpenRandomVideo(page, profileName, title, ourVideoId) {
     const q = (title || ourVideoId || 'youtube').trim();
-    // Prefer using the search box UI; fallback to results URL
+    console.log(`[VIEWS] ${profileName} search query: "${q.slice(0, 60)}"`);
+
+    // Always land on results URL first (more reliable in headless than typing only)
+    const resultsUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
     try {
-      await page.goto('https://www.youtube.com/', {
+      await page.goto(resultsUrl, {
         waitUntil: 'domcontentloaded',
         timeout: navTimeout(),
       });
-      await sleep(1000 + Math.floor(Math.random() * 800));
-      await this._dismissBanners(page).catch(() => {});
-
-      const box = page.locator('input#search, input[name="search_query"]').first();
-      if (await box.count().catch(() => 0)) {
-        await box.click({ timeout: 5000 }).catch(() => {});
-        await sleep(300 + Math.floor(Math.random() * 400));
-        await box.fill('');
-        // Type with small delays (human)
-        for (const ch of q.slice(0, 80)) {
-          await page.keyboard.type(ch, { delay: 40 + Math.floor(Math.random() * 70) });
-        }
-        await sleep(400 + Math.floor(Math.random() * 500));
-        await page.keyboard.press('Enter');
-      } else {
-        await page.goto(
-          `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
-          { waitUntil: 'domcontentloaded', timeout: navTimeout() }
-        );
-      }
-    } catch (_) {
-      await page.goto(
-        `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
-        { waitUntil: 'domcontentloaded', timeout: navTimeout() }
-      );
+    } catch (e) {
+      console.warn(`[VIEWS] ${profileName} results goto fail:`, e.message);
     }
 
-    await sleep(2000 + Math.floor(Math.random() * 1500));
+    await sleep(2500 + Math.floor(Math.random() * 1500));
     await this._dismissBanners(page).catch(() => {});
-    try {
-      await page.evaluate(() => window.scrollBy(0, 100 + Math.floor(Math.random() * 250)));
-    } catch (_) {}
-    await sleep(500);
 
-    await this._clickRandomSearchResult(page, profileName, ourVideoId);
+    // Wait for result nodes (YouTube hydrates slow in headless)
+    try {
+      await page.waitForSelector(
+        'ytd-video-renderer, ytd-rich-item-renderer, a#video-title, a[href*="watch?v="]',
+        { timeout: 20000 }
+      );
+    } catch (_) {
+      console.warn(`[VIEWS] ${profileName} search DOM slow – scrolling to load`);
+    }
+
+    // Scroll to trigger lazy load
+    for (let i = 0; i < 3; i++) {
+      try {
+        await page.evaluate(() => window.scrollBy(0, 400 + Math.floor(Math.random() * 300)));
+      } catch (_) {}
+      await sleep(700 + Math.floor(Math.random() * 500));
+    }
+    await this._dismissBanners(page).catch(() => {});
+
+    const clicked = await this._clickRandomSearchResult(page, profileName, ourVideoId);
+    if (!clicked) {
+      // Last resort: open a known public video so step2 does not die empty
+      console.warn(`[VIEWS] ${profileName} search empty → fallback popular video`);
+      try {
+        await page.goto('https://www.youtube.com/watch?v=jNQXAC9IVRw', {
+          waitUntil: 'domcontentloaded',
+          timeout: navTimeout(),
+        });
+        await sleep(2000);
+        await this._dismissBanners(page).catch(() => {});
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -3198,29 +3521,41 @@ class BotService {
   async _clickRandomSearchResult(page, profileName, ourVideoId) {
     try {
       const hrefs = await page.evaluate((skipId) => {
-        const nodes = Array.from(
-          document.querySelectorAll(
-            'ytd-video-renderer a#thumbnail[href*="watch"], ytd-video-renderer a#video-title[href*="watch"], ytd-rich-item-renderer a#thumbnail[href*="watch"]'
-          )
-        );
+        const sels = [
+          'ytd-video-renderer a#thumbnail[href]',
+          'ytd-video-renderer a#video-title[href]',
+          'ytd-rich-item-renderer a#thumbnail[href]',
+          'a#video-title[href*="watch"]',
+          'a[href*="/watch?v="]',
+        ];
+        const seen = new Set();
         const out = [];
-        for (const a of nodes) {
-          const href = a.getAttribute('href') || '';
-          if (!href.includes('watch')) continue;
-          if (skipId && href.includes(skipId)) continue; // skip our video
-          out.push(href);
+        for (const sel of sels) {
+          for (const a of Array.from(document.querySelectorAll(sel))) {
+            let href = a.getAttribute('href') || '';
+            if (!href) continue;
+            // normalize
+            if (href.startsWith('/')) href = href;
+            if (!href.includes('watch') && !href.includes('/shorts/')) continue;
+            if (skipId && href.includes(skipId)) continue;
+            if (seen.has(href)) continue;
+            seen.add(href);
+            out.push(href);
+          }
         }
-        return out.slice(0, 20);
+        return out.slice(0, 25);
       }, ourVideoId || '');
 
       let list = hrefs || [];
-      // If all were our video / empty, take any watch link
       if (!list.length) {
         list = await page.evaluate(() => {
-          const nodes = Array.from(
-            document.querySelectorAll('a#thumbnail[href*="watch"], a#video-title[href*="watch"]')
-          );
-          return nodes.map((a) => a.getAttribute('href') || '').filter((h) => h.includes('watch')).slice(0, 15);
+          const nodes = Array.from(document.querySelectorAll('a[href*="watch?v="], a[href*="/shorts/"]'));
+          const out = [];
+          for (const a of nodes) {
+            const href = a.getAttribute('href') || '';
+            if (href) out.push(href);
+          }
+          return out.slice(0, 20);
         });
       }
 
@@ -3285,17 +3620,23 @@ class BotService {
    */
   async _watchForSecondsWithActivity(page, profileName, seconds) {
     const sec = Math.max(1, parseInt(seconds, 10) || 10);
-    console.log(`[VIEWS] ${profileName} activity-watch ${sec}s`);
-    // Ensure playing
+    console.log(`[VIEWS] ${profileName} activity-watch ${sec}s (start)`);
     try {
       await page.evaluate(async () => {
         const video =
           document.querySelector('video') || document.querySelector('#movie_player video');
         if (!video) return;
-        video.muted = true;
+        try {
+          video.muted = false;
+          video.volume = 0.15;
+        } catch (_) {
+          video.muted = true;
+        }
         try {
           await video.play();
         } catch (_) {
+          video.muted = true;
+          await video.play().catch(() => {});
           const p = document.querySelector('#movie_player');
           if (p) p.click();
         }
@@ -3303,33 +3644,40 @@ class BotService {
     } catch (_) {}
 
     const endAt = Date.now() + sec * 1000;
+    let lastLog = Date.now();
     while (Date.now() < endAt) {
+      // progress log every ~10s so it does not look "stuck"
+      if (Date.now() - lastLog >= 10000) {
+        const left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+        console.log(`[VIEWS] ${profileName} activity-watch … ${left}s left`);
+        lastLog = Date.now();
+      }
+
+      // Skip ads continuously
       try {
-        const box = await page.evaluate(() => {
-          const v =
-            document.querySelector('#movie_player') ||
-            document.querySelector('video') ||
-            document.body;
-          const r = v.getBoundingClientRect();
-          return {
-            x: r.left,
-            y: r.top,
-            w: Math.max(r.width, 200),
-            h: Math.max(r.height, 200),
-          };
-        });
+        await this._skipAdsIfPresent(page, profileName);
+      } catch (_) {}
+
+      try {
         await page.mouse.move(
-          box.x + Math.random() * box.w,
-          box.y + Math.random() * box.h,
-          { steps: 4 + Math.floor(Math.random() * 10) }
+          100 + Math.random() * 500,
+          100 + Math.random() * 320,
+          { steps: 6 + Math.floor(Math.random() * 10) }
         );
       } catch (_) {}
+
+      // Smooth human-like scroll (both directions)
       try {
-        if (Math.random() > 0.45) {
-          await page.evaluate(() => window.scrollBy(0, 80 + Math.floor(Math.random() * 220)));
+        if (Math.random() > 0.35) {
+          const dir = Math.random() > 0.3 ? 1 : -1;
+          const amount = 40 + Math.floor(Math.random() * 140);
+          await page.evaluate(
+            ({ d, a }) => window.scrollBy({ top: d * a, left: 0, behavior: 'smooth' }),
+            { d: dir, a: amount }
+          );
         }
       } catch (_) {}
-      // keep video playing
+
       try {
         await page.evaluate(() => {
           const video =
@@ -3337,8 +3685,11 @@ class BotService {
           if (video && video.paused) video.play().catch(() => {});
         });
       } catch (_) {}
-      await sleep(800 + Math.floor(Math.random() * 700));
+      const leftMs = endAt - Date.now();
+      if (leftMs <= 0) break;
+      await sleep(Math.min(700 + Math.floor(Math.random() * 600), leftMs));
     }
+    console.log(`[VIEWS] ${profileName} activity-watch ${sec}s (done)`);
   }
 
   /**
@@ -3422,6 +3773,7 @@ class BotService {
         .waitForSelector('video, ytd-player, #movie_player', { timeout: actionTimeout() })
         .catch(() => {});
       await this._humanStartVideo(page, profileName);
+      await this._skipAdsIfPresent(page, profileName);
 
       // ========== 4) Watch OUR video (configured time) + cursor + scroll ==========
       console.log(`[VIEWS] ${profileName} step4 watch our video (cursor + scroll)`);
@@ -3625,9 +3977,23 @@ class BotService {
   async _humanScroll(page, botName, rounds = 3) {
     console.log(`[${botName}] Human-like scroll (${rounds} rounds)...`);
     for (let i = 0; i < rounds; i++) {
-      const delta = 300 + Math.floor(Math.random() * 500);
-      await page.evaluate((d) => window.scrollBy(0, d), delta);
-      await sleep(800 + Math.floor(Math.random() * 1200));
+      // Random direction + smooth behavior (looks less robotic)
+      const dir = Math.random() > 0.25 ? 1 : -1;
+      const delta = 180 + Math.floor(Math.random() * 420);
+      await page.evaluate(
+        ({ d, a }) => window.scrollBy({ top: d * a, left: 0, behavior: 'smooth' }),
+        { d: dir, a: delta }
+      );
+      await sleep(600 + Math.floor(Math.random() * 1100));
+
+      // Occasional micro-pause + small reverse scroll
+      if (Math.random() > 0.55) {
+        await page.evaluate(() =>
+          window.scrollBy({ top: -(40 + Math.random() * 90), left: 0, behavior: 'smooth' })
+        );
+        await sleep(300 + Math.floor(Math.random() * 500));
+      }
+
       try {
         const box = await page.evaluate(() => {
           const w = window.innerWidth || 800;
@@ -3635,10 +4001,15 @@ class BotService {
           return { w, h };
         });
         await page.mouse.move(
-          80 + Math.random() * (box.w - 160),
-          80 + Math.random() * (box.h - 160),
-          { steps: 5 + Math.floor(Math.random() * 8) }
+          60 + Math.random() * (box.w - 120),
+          60 + Math.random() * (box.h - 120),
+          { steps: 8 + Math.floor(Math.random() * 12) }
         );
+      } catch (_) {}
+
+      // Also try to clear any ads while scrolling
+      try {
+        await this._skipAdsIfPresent(page, botName);
       } catch (_) {}
     }
   }
