@@ -1,15 +1,12 @@
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const playwright = require('playwright');
+const proxyPool = require('./proxyPool.util');
+const fpUtil = require('./fingerprint.util');
 
-/**
- * Find browser executable for Playwright.
- * Priority:
- *   1) BRAVE_PATH / CHROME_PATH / BROWSER_PATH env (if file exists)
- *   2) Brave (default when USE_BRAVE !== 'false')
- *   3) Google Chrome
- *   4) null → Playwright bundled Chromium
- */
 function findChromePath() {
   return findBrowserPath();
 }
@@ -50,19 +47,13 @@ function findBrowserPath() {
       path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe')
     );
   } else if (platform === 'darwin') {
-    braveCandidates.push(
-      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
-    );
+    braveCandidates.push('/Applications/Brave Browser.app/Contents/MacOS/Brave Browser');
     chromeCandidates.push(
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       '/Applications/Chromium.app/Contents/MacOS/Chromium'
     );
   } else {
-    braveCandidates.push(
-      '/usr/bin/brave-browser',
-      '/usr/bin/brave',
-      '/snap/bin/brave'
-    );
+    braveCandidates.push('/usr/bin/brave-browser', '/usr/bin/brave', '/snap/bin/brave');
     chromeCandidates.push(
       '/usr/bin/google-chrome-stable',
       '/usr/bin/google-chrome',
@@ -87,10 +78,7 @@ function findBrowserPath() {
   return null;
 }
 
-/**
- * Chromium args for VMware + low-memory VMs.
- */
-function vmwareArgs() {
+function vmwareArgs(customViewport = null) {
   const isVm =
     process.env.VMWARE === 'true' ||
     process.env.VM === 'true' ||
@@ -101,22 +89,23 @@ function vmwareArgs() {
     process.env.LOW_RAM === 'true' ||
     isVm;
 
-  const width = parseInt(process.env.VIEWPORT_W || (lowMem ? '1024' : '1366'), 10);
-  const height = parseInt(process.env.VIEWPORT_H || (lowMem ? '576' : '768'), 10);
+  const width = customViewport?.width || parseInt(process.env.VIEWPORT_W || (lowMem ? '1024' : '1366'), 10);
+  const height = customViewport?.height || parseInt(process.env.VIEWPORT_H || (lowMem ? '576' : '768'), 10);
 
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-blink-features=AutomationControlled',
+    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+    '--disk-cache-size=1048576',
+    '--media-cache-size=1048576',
+    '--aggressive-cache-discard',
     '--disable-infobars',
     '--no-first-run',
     '--no-default-browser-check',
     '--window-size=' + width + ',' + height,
-    '--renderer-process-limit=1',
-    '--in-process-gpu',
-    '--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process',
-    '--js-flags=--max-old-space-size=256'
+    '--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins',
   ];
 
   if (isVm || lowMem) {
@@ -144,22 +133,18 @@ function vmwareArgs() {
       '--memory-pressure-off',
       '--force-color-profile=srgb'
     );
-    console.log(
-      '[VM] Low-memory mode ON (window ' + width + 'x' + height + ', single-process, GPU off)'
-    );
   }
 
   if (process.env.SINGLE_PROCESS === 'false') {
     const idx = args.indexOf('--single-process');
     if (idx >= 0) args.splice(idx, 1);
-    console.log('[VM] single-process disabled');
   }
 
-  // Visible browser (HEADLESS=false): remove flags that cause BLACK SCREEN
   const headed =
     process.env.HEADLESS === 'false' ||
     process.env.HEADED === 'true' ||
     process.env.VISIBLE_BROWSER === 'true';
+
   if (headed) {
     const kill = new Set([
       '--disable-gpu',
@@ -171,14 +156,83 @@ function vmwareArgs() {
       '--mute-audio',
     ]);
     const filtered = args.filter((a) => !kill.has(a) && !String(a).startsWith('--js-flags='));
-    // Use GPU / ANGLE so window paints
     filtered.push('--use-gl=angle');
     filtered.push('--enable-gpu-rasterization');
-    console.log('[VM] HEADED mode – removed black-screen flags (gpu on)');
     return { isVm, lowMem: false, width, height, args: filtered };
   }
 
   return { isVm, lowMem, width, height, args };
 }
 
-module.exports = { findChromePath, findBrowserPath, vmwareArgs };
+async function launchStealthProfile(profileName, options = {}) {
+  const useProxy = options.useProxy !== false;
+  const headless = options.headless !== undefined ? options.headless : process.env.HEADLESS !== 'false';
+  const maxRetries = options.maxRetries || 3;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let proxyObj = null;
+
+    if (useProxy) {
+      if (proxyPool.proxies.length === 0) {
+        await proxyPool.scrapeAndHarvest(options.harvestTarget || 300, 120);
+      }
+      proxyObj = proxyPool.getProxyForProfile(profileName + (attempt > 1 ? `_retry${attempt}` : ''));
+    }
+
+    const fp = fpUtil.buildFingerprint(profileName, { proxyGeo: proxyObj });
+    fpUtil.logFingerprint(fp);
+
+    const profilesBaseDir = path.join(__dirname, '..', '..', 'profiles');
+    const userDataDir = path.join(profilesBaseDir, profileName);
+    if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });
+
+    const vmConfig = vmwareArgs(fp.viewport);
+    const engineType = playwright[fp.engine] || playwright.chromium;
+
+    const launchOptions = {
+      ...fpUtil.contextOptionsFromFp(fp),
+      headless,
+      extraHTTPHeaders: fpUtil.clientHintHeaders(fp),
+    };
+
+    if (fp.engine === 'chromium') {
+      const execPath = findBrowserPath();
+      if (execPath) launchOptions.executablePath = execPath;
+      launchOptions.args = vmConfig.args;
+      launchOptions.ignoreDefaultArgs = ['--enable-automation'];
+    }
+
+    if (proxyObj) {
+      launchOptions.proxy = { server: proxyObj.server };
+    }
+
+    let context = null;
+    try {
+      context = await engineType.launchPersistentContext(userDataDir, launchOptions);
+      await context.addInitScript(fpUtil.fingerprintInitScript(), fpUtil.initScriptPayload(fp));
+
+      const page = context.pages()[0] || (await context.newPage());
+      return {
+        context,
+        page,
+        fp,
+        proxyObj,
+        simulateHuman: () => fpUtil.simulateHumanBehavior(page, profileName),
+        markProxyDead: () => {
+          if (proxyObj) proxyPool.markDead(proxyObj.server);
+        },
+      };
+    } catch (err) {
+      if (context) await context.close().catch(() => {});
+      if (proxyObj) proxyPool.markDead(proxyObj.server);
+      if (attempt === maxRetries) throw err;
+    }
+  }
+}
+
+module.exports = {
+  findChromePath,
+  findBrowserPath,
+  vmwareArgs,
+  launchStealthProfile,
+};

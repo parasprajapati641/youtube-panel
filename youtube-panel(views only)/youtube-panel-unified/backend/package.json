@@ -10,18 +10,21 @@
     "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
-    "axios": "^1.6.8",
+    "axios": "^1.21.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "https-proxy-agent": "^9.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.3.1",
     "morgan": "^1.10.0",
     "node-cron": "^3.0.3",
     "nodemon": "^3.1.14",
     "playwright": "^1.49.1",
+    "proxy-chain": "^3.0.3",
     "random-mac": "^0.0.5",
+    "socks-proxy-agent": "^10.1.0",
     "user-agents": "^2.1.246"
   }
 }

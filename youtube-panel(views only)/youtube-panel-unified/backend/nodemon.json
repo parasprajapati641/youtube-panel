@@ -7,7 +7,11 @@
     ".profiles/**",
     "node_modules/**",
     "*.log",
-    "bot/.profiles/**"
+    "bot/.profiles/**",
+    "bot/working_proxies.json",
+    "**/working_proxies.json",
+    "**/proxies.txt",
+    "*.png"
   ],
   "delay": 1000
 }
