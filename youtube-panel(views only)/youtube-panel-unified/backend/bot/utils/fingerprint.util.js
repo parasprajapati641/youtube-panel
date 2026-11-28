@@ -158,22 +158,13 @@ function buildBrandUserAgent(brand, seed, platKey) {
 function buildFingerprint(botName, opts = {}) {
   const seed = hashSeed(botName || 'bot');
 
-  const browserBrand =
-    opts.browserBrand && BROWSER_BRANDS.includes(opts.browserBrand)
-      ? opts.browserBrand
-      : pickStableBrowserBrand(botName || 'bot');
+  const browserBrand = 'Google Chrome';
   const brandMeta = getBrandMeta(browserBrand);
-  const engine = brandMeta.engine;
+  const engine = 'chromium';
 
-  // OS consistency with browser engine
-  let platKey = 'win';
-  if (engine === 'webkit') {
-    platKey = 'mac';
-  } else {
-    platKey = ['win', 'win', 'win', 'mac', 'linux'][seed[13] % 5];
-  }
+  // Strictly match real host OS so WebGL shader & navigator.platform NEVER mismatch
+  const platKey = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'mac' : 'win';
 
-  // Real matching Screen + Viewport (Mac gets Mac screens, Win gets Win screens)
   const screenPool = platKey === 'mac'
     ? REAL_DESKTOP_SCREENS.filter((s) => s.taskbar === 25)
     : REAL_DESKTOP_SCREENS.filter((s) => s.taskbar === 40);
@@ -187,25 +178,23 @@ function buildFingerprint(botName, opts = {}) {
   const plat = PLATFORMS[platKey];
   const defaultLoc = pick(seed.slice(2), LOCALES);
 
-  // Sync Locale & Timezone with Proxy IP if provided!
   const timezoneId = (opts.proxyGeo && opts.proxyGeo.timezoneId) || process.env.FP_TIMEZONE || defaultLoc.timezoneId;
   const locale = (opts.proxyGeo && opts.proxyGeo.locale) || defaultLoc.locale;
   const languages = locale === 'en-IN' ? ['en-IN', 'en', 'hi'] : [locale, 'en'];
 
-  // OS-matched GPU (Never puts Apple M1 on Windows or Direct3D on Mac!)
   const webglList = WEBGL_BY_OS[platKey];
   const webgl = webglList[seed[3] % webglList.length];
 
   const hardwareConcurrency = [4, 6, 8, 12, 16][seed[4] % 5];
   const deviceMemory = [4, 8, 8, 16][seed[5] % 4];
-  const deviceScaleFactor = platKey === 'mac' ? 2 : [1, 1, 1.25][seed[12] % 3];
+  const deviceScaleFactor = platKey === 'mac' ? 2 : 1;
 
   const canvasNoise = {
-    r: (seed[7] % 5) - 2,
-    g: (seed[8] % 5) - 2,
-    b: (seed[9] % 5) - 2,
+    r: (seed[7] % 3) - 1,
+    g: (seed[8] % 3) - 1,
+    b: (seed[9] % 3) - 1,
   };
-  const audioNoise = ((seed[10] % 100) + 1) * 0.0000001;
+  const audioNoise = ((seed[10] % 50) + 1) * 0.0000001;
   const rectNoise = (seed[11] % 3) * 0.05;
 
   const ua = buildBrandUserAgent(browserBrand, seed, platKey);
@@ -249,7 +238,6 @@ function buildFingerprint(botName, opts = {}) {
     outerHeight: chosenScreen.screenH - chosenScreen.taskbar,
   };
 }
-
 function contextOptionsFromFp(fp) {
   const opts = {
     userAgent: fp.userAgent,
