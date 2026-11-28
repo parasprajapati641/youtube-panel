@@ -173,6 +173,7 @@ function extractYoutubeVideoId(url) {
       u.match(/[?&]v=([a-zA-Z0-9_-]{6,})/) ||
       u.match(/youtu\.be\/([a-zA-Z0-9_-]{6,})/) ||
       u.match(/\/shorts\/([a-zA-Z0-9_-]{6,})/) ||
+      u.match(/\/live\/([a-zA-Z0-9_-]{6,})/) ||
       u.match(/\/embed\/([a-zA-Z0-9_-]{6,})/);
     return m ? m[1] : null;
   } catch (_) {
