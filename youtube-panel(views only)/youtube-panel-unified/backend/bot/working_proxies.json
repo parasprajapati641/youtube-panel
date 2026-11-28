@@ -1,8 +1,45 @@
 [
   {
+    "server": "http://resi-ipv4-1.gw.tprx.io:8080",
+    "username": "vsjh1kiyu778-country-us-rotate",
+    "password": "h0OnnwnbH4XRa3ThfxPy",
+    "type": "http",
+    "unlimitedHourly": true,
+    "latencyMs": 90,
+    "timezoneId": "America/New_York",
+    "locale": "en-US"
+  },
+  {
     "server": "http://pr.oxylabs.io:7777",
-    "username": "customer-resi_3bdd701e",
-    "password": "2P4pR5aX4NZ_",
+    "username": "customer-resi_918ea982-cc-US",
+    "password": "3ps+X4FoLeCZ",
+    "type": "http",
+    "latencyMs": 120,
+    "timezoneId": "America/New_York",
+    "locale": "en-US"
+  },
+  {
+    "server": "http://pr.oxylabs.io:7777",
+    "username": "customer-resi_e7fdd515-cc-US",
+    "password": "QXzw4rWpsZ=Q",
+    "type": "http",
+    "latencyMs": 120,
+    "timezoneId": "America/New_York",
+    "locale": "en-US"
+  },
+  {
+    "server": "http://pr.oxylabs.io:7777",
+    "username": "customer-resi_cba8680f-cc-US",
+    "password": "07+jjBH96mlE",
+    "type": "http",
+    "latencyMs": 120,
+    "timezoneId": "America/New_York",
+    "locale": "en-US"
+  },
+  {
+    "server": "http://pr.oxylabs.io:7777",
+    "username": "customer-resi_88d96bf6-cc-US",
+    "password": "9KkfhKG_=NSq",
     "type": "http",
     "latencyMs": 120,
     "timezoneId": "America/New_York",
