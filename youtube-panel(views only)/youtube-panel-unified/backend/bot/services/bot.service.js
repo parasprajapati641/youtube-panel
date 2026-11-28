@@ -784,11 +784,14 @@ class BotService {
 
       const playerCrash = await page.evaluate(() => {
         const bodyText = document.body ? document.body.innerText : '';
-        return bodyText.includes('Something went wrong') || !!document.querySelector('.ytp-error, #error-screen');
-      }).catch(() => false);
+        if (bodyText.includes('Something went wrong')) return 'Something went wrong';
+        if (bodyText.includes('Sign in to confirm')) return 'Sign in bot check';
+        if (document.querySelector('.ytp-error, #error-screen')) return 'ytp-error';
+        return null;
+      }).catch(() => null);
 
       if (playerCrash) {
-        throw new Error('YouTube player error (Something went wrong) - rotating IP');
+        throw new Error(`YouTube player blocked (${playerCrash}) - rotating IP`);
       }
 
       const check15 = await page.evaluate((vol) => {
@@ -1043,6 +1046,7 @@ class BotService {
       args.push('--disable-blink-features=AutomationControlled');
     }
     args.push(
+      '--disable-dev-shm-usage',
       '--autoplay-policy=no-user-gesture-required',
       '--use-fake-device-for-media-stream',
       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',

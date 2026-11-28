@@ -111,8 +111,8 @@ const WEBGL_BY_OS = {
     { vendor: 'Google Inc. (Apple)', renderer: 'ANGLE (Apple, Apple M3, OpenGL 4.1)' },
   ],
   linux: [
-    { vendor: 'Mesa', renderer: 'Mesa Intel(R) UHD Graphics 620 (KBL GT2)' },
-    { vendor: 'NVIDIA Corporation', renderer: 'NVIDIA GeForce GTX 1650/PCIe/SSE2' },
+    { vendor: 'Google Inc. (Google)', renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)' },
+    { vendor: 'Google Inc. (Mesa)', renderer: 'ANGLE (Mesa, llvmpipe (LLVM 15.0.7), OpenGL 4.5)' },
   ],
 };
 
